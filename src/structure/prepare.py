@@ -270,7 +270,7 @@ def _select_altlocs(
 
     kept_indexes: set[int] = set()
     removed_count = 0
-    warnings: list[str] = []
+    residues_with_altlocs: dict[tuple[object, ...], AtomRecord] = {}
 
     for key, group in grouped_atoms.items():
         if len(group) == 1:
@@ -284,20 +284,20 @@ def _select_altlocs(
 
         kept_indexes.add(selected_index)
         removed_count += len(group) - 1
-
-        warnings.append(
-            "Alternate conformers detected for "
-            f"{selected_atom.chain_id}:{selected_atom.residue_name}"
-            f"{selected_atom.residue_number}{selected_atom.insertion_code}:"
-            f"{selected_atom.atom_name}. Kept altloc "
-            f"{selected_atom.altloc!r} with occupancy {selected_atom.occupancy}."
-        )
+        residues_with_altlocs.setdefault(_residue_key(selected_atom), selected_atom)
 
     kept_atoms = tuple(
         atom
         for index, atom in enumerate(atoms)
         if index in kept_indexes
     )
+
+    warnings = [
+        "Alternate conformers detected in "
+        f"{_format_residue_label(atom)}. "
+        "Highest-occupancy atom sites were retained."
+        for atom in residues_with_altlocs.values()
+    ]
 
     return kept_atoms, removed_count, warnings
 
@@ -511,6 +511,33 @@ def _atom_site_key(atom: AtomRecord) -> tuple[object, ...]:
         atom.insertion_code.strip(),
         atom.atom_name.strip().upper(),
     )
+
+
+def _residue_key(atom: AtomRecord) -> tuple[object, ...]:
+    """
+    Return a key representing a residue.
+    """
+
+    return (
+        atom.model_number,
+        atom.chain_id,
+        atom.residue_name.strip().upper(),
+        atom.residue_number,
+        atom.insertion_code.strip(),
+    )
+
+
+def _format_residue_label(atom: AtomRecord) -> str:
+    """
+    Return a compact human-readable residue label for warnings.
+    """
+
+    chain_id = atom.chain_id.strip() or "?"
+    residue_name = atom.residue_name.strip().upper() or "?"
+    residue_number = "?" if atom.residue_number is None else str(atom.residue_number)
+    insertion_code = atom.insertion_code.strip()
+
+    return f"chain {chain_id} residue {residue_name}{residue_number}{insertion_code}"
 
 
 def _prepared_atom_key(atom: PreparedAtom) -> tuple[object, ...]:
