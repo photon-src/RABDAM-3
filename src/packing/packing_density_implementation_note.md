@@ -13,7 +13,7 @@ for each selected BDamage atom:
     count = 0
     for each trimmed neighbour atom:
         calculate distance between selected atom and neighbour atom
-        if distance <= packing_density_threshold:
+        if distance < packing_density_threshold:
             count += 1
 ```
 
@@ -30,10 +30,14 @@ distance_squared = dx*dx + dy*dy + dz*dz
 Then it checks:
 
 ```text
-distance_squared <= packing_density_threshold * packing_density_threshold
+distance_squared < packing_density_threshold * packing_density_threshold
 ```
 
 This avoids unnecessary square-root calculations while giving the same inclusion result as comparing actual Euclidean distances.
+The final packing-density value subtracts one from this raw count to match
+RABDAM 2 behaviour, where the selected atom's own central-cell copy is assumed
+to be present in the trimmed neighbour cloud and is removed from the contact
+count.
 
 ## Why this is acceptable for the baseline
 
@@ -79,7 +83,7 @@ After the baseline BDamage implementation is validated, packing-density counting
 Any optimization should preserve the same inclusion rule:
 
 ```text
-distance <= packing_density_threshold
+distance < packing_density_threshold
 ```
 
 and should be tested against the native-Python implementation to confirm that neighbour counts remain identical.

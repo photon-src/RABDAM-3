@@ -4,7 +4,8 @@ Packing-density calculation for BDamage.
 The trimmed crystal block contains the local neighbour cloud around the selected
 asymmetric-unit atoms. For each selected atom, packing density is the number of
 trimmed crystal atoms whose Cartesian distance from that selected atom is less
-than or equal to the packing-density threshold.
+than the packing-density threshold, minus one to remove the selected atom's
+central-cell copy.
 
 This module performs the exact distance-counting step after the broader crystal
 block has already been reduced by crystal.trim.
@@ -41,8 +42,8 @@ class PackingDensityAtomResult:
 
     neighbour_count:
         Number of trimmed crystal atoms within the packing-density threshold of
-        this selected atom. The central-cell copy of the atom itself is counted
-        when present in the neighbour cloud.
+        this selected atom, after subtracting one for the central-cell copy of
+        the atom itself.
     """
 
     packing_density_atom_index: int
@@ -138,7 +139,8 @@ def calculate_packing_density(
                 selected_atom=selected_atom,
                 neighbour_atoms=neighbour_atom_tuple,
                 threshold_squared=threshold_squared,
-            ),
+            )
+            - 1,
         )
         for selected_atom_index, selected_atom in enumerate(selected_atom_tuple, start=1)
     )
@@ -158,7 +160,7 @@ def count_neighbours_within_threshold_squared(
     threshold_squared: float,
 ) -> int:
     """
-    Count neighbours whose squared Cartesian distance is <= threshold_squared.
+    Count neighbours whose squared Cartesian distance is < threshold_squared.
 
     Squared distances are used to avoid square-root calculations while producing
     the same inclusion result as comparing true Euclidean distances.
@@ -181,7 +183,7 @@ def count_neighbours_within_threshold_squared(
             selected_y=selected_y,
             selected_z=selected_z,
             neighbour_atom=neighbour_atom,
-        ) <= threshold_squared:
+        ) < threshold_squared:
             count += 1
 
     return count

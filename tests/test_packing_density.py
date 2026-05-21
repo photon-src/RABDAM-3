@@ -168,7 +168,7 @@ class PackingDensityTests(unittest.TestCase):
 
         self.assertEqual(distance_squared, 50.0)
 
-    def test_count_neighbours_includes_atoms_on_threshold_boundary(self) -> None:
+    def test_count_neighbours_excludes_atoms_on_threshold_boundary(self) -> None:
         selected_atom = make_prepared_atom(
             source_atom_index=0,
             x=0.0,
@@ -187,18 +187,18 @@ class PackingDensityTests(unittest.TestCase):
             threshold_squared=25.0,
         )
 
-        self.assertEqual(count, 2)
+        self.assertEqual(count, 1)
 
-    def test_calculate_packing_density_counts_each_selected_atom(self) -> None:
+    def test_calculate_packing_density_counts_each_selected_atom_after_self_correction(self) -> None:
         selected_atoms = (
             make_prepared_atom(source_atom_index=0, atom_serial=101, x=0.0, y=0.0, z=0.0),
             make_prepared_atom(source_atom_index=1, atom_serial=102, x=10.0, y=0.0, z=0.0),
         )
         neighbour_atoms = (
             make_translated_atom(translated_atom_index=1, x=0.0, y=0.0, z=0.0),
-            make_translated_atom(translated_atom_index=2, x=3.0, y=4.0, z=0.0),
+            make_translated_atom(translated_atom_index=2, x=2.0, y=2.0, z=0.0),
             make_translated_atom(translated_atom_index=3, x=10.0, y=0.0, z=0.0),
-            make_translated_atom(translated_atom_index=4, x=20.0, y=0.0, z=0.0),
+            make_translated_atom(translated_atom_index=4, x=13.0, y=0.0, z=0.0),
         )
 
         result = calculate_packing_density(
@@ -210,7 +210,7 @@ class PackingDensityTests(unittest.TestCase):
         self.assertEqual(result.selected_atom_count, 2)
         self.assertEqual(result.neighbour_atom_count, 4)
         self.assertEqual(result.packing_density_threshold, 5.0)
-        self.assertEqual(packing_density_counts_as_tuple(result), (2, 1))
+        self.assertEqual(packing_density_counts_as_tuple(result), (1, 1))
         self.assertEqual(result.atom_results[0].packing_density_atom_index, 1)
         self.assertEqual(result.atom_results[0].source_atom_index, 0)
         self.assertEqual(result.atom_results[0].atom_serial, 101)
@@ -236,7 +236,7 @@ class PackingDensityTests(unittest.TestCase):
             packing_density_threshold=7.5,
         )
 
-        self.assertEqual(packing_density_counts_as_tuple(result), (2,))
+        self.assertEqual(packing_density_counts_as_tuple(result), (1,))
         self.assertEqual(result.selected_atom_count, 1)
         self.assertEqual(result.neighbour_atom_count, 2)
 
