@@ -129,7 +129,7 @@ class BDamageScoreTests(unittest.TestCase):
 
         self.assertEqual(averages, (20.0, 20.0, 30.0, 40.0, 40.0))
 
-    def test_centered_window_average_b_factors_matches_even_window_alignment(self) -> None:
+    def test_even_window_size_raises(self) -> None:
         inputs = tuple(
             make_atom_input(
                 bdamage_atom_index=index,
@@ -141,9 +141,8 @@ class BDamageScoreTests(unittest.TestCase):
             for index in range(1, 7)
         )
 
-        averages = centered_window_average_b_factors(inputs, window_size=4)
-
-        self.assertEqual(averages, (2.5, 2.5, 2.5, 3.5, 4.5, 4.5))
+        with self.assertRaises(BDamageScoreError):
+            centered_window_average_b_factors(inputs, window_size=4)
 
     def test_calculate_bdamage_scores_returns_original_selected_atom_order(self) -> None:
         inputs = (
@@ -238,6 +237,14 @@ class BDamageScoreTests(unittest.TestCase):
 
         with self.assertRaises(BDamageScoreError):
             calculate_bdamage_scores(atom_inputs=inputs, window_size=2)
+
+    def test_boolean_window_size_raises(self) -> None:
+        inputs = (
+            make_atom_input(bdamage_atom_index=1, source_atom_index=0, atom_serial=1, b_factor=10.0, packing_density=1),
+        )
+
+        with self.assertRaises(BDamageScoreError):
+            calculate_bdamage_scores(atom_inputs=inputs, window_size=True)
 
     def test_non_positive_b_factor_raises(self) -> None:
         inputs = (

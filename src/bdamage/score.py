@@ -258,7 +258,7 @@ def calculate_bdamage_scores(
 def validate_window_size(*, window_size: int, atom_count: int) -> None:
     """Validate a BDamage sliding-window size."""
 
-    if not isinstance(window_size, int):
+    if type(window_size) is not int:
         raise BDamageScoreError(
             f"window_size must be an integer, got {window_size!r}."
         )
@@ -266,6 +266,11 @@ def validate_window_size(*, window_size: int, atom_count: int) -> None:
     if window_size <= 0:
         raise BDamageScoreError(
             f"window_size must be positive, got {window_size!r}."
+        )
+
+    if window_size % 2 == 0:
+        raise BDamageScoreError(
+            f"window_size must be odd, got {window_size!r}."
         )
 
     if window_size > atom_count:
