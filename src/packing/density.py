@@ -135,12 +135,10 @@ def calculate_packing_density(
             packing_density_atom_index=selected_atom_index,
             source_atom_index=selected_atom.record.source_atom_index,
             atom_serial=selected_atom.record.atom_serial,
-            neighbour_count=_remove_selected_atom_self_copy_from_count(
-                _count_neighbours_within_threshold_squared(
-                    selected_atom=selected_atom,
-                    neighbour_atoms=neighbour_atom_tuple,
-                    threshold_squared=threshold_squared,
-                )
+            neighbour_count=_count_neighbours_excluding_selected_atom_self_copy(
+                selected_atom=selected_atom,
+                neighbour_atoms=neighbour_atom_tuple,
+                threshold_squared=threshold_squared,
             ),
         )
         for selected_atom_index, selected_atom in enumerate(selected_atom_tuple, start=1)
@@ -154,20 +152,65 @@ def calculate_packing_density(
     )
 
 
-def _remove_selected_atom_self_copy_from_count(raw_count: int) -> int:
+def _count_neighbours_excluding_selected_atom_self_copy(
+    *,
+    selected_atom: PreparedAtom,
+    neighbour_atoms: tuple[TranslatedAtom, ...],
+    threshold_squared: float,
+) -> int:
     """
-    Remove the selected atom's central-cell copy from a raw neighbour count.
+    Count neighbours, then remove the selected atom's central-cell copy.
     """
 
-    neighbour_count = raw_count - 1
-    if neighbour_count < 0:
+    raw_count = _count_neighbours_within_threshold_squared(
+        selected_atom=selected_atom,
+        neighbour_atoms=neighbour_atoms,
+        threshold_squared=threshold_squared,
+    )
+    if not _selected_atom_self_copy_is_counted(
+        selected_atom=selected_atom,
+        neighbour_atoms=neighbour_atoms,
+        threshold_squared=threshold_squared,
+    ):
         raise PackingDensityError(
-            "Packing-density count became negative after subtracting the "
-            "selected atom's central-cell copy. Check that the neighbour cloud "
-            "contains the selected atom's central-cell image."
+            "Cannot subtract the selected atom's central-cell copy from the "
+            "packing-density count because that copy was not counted. Check "
+            "that the neighbour cloud contains the selected atom's central-cell "
+            "image."
         )
 
-    return neighbour_count
+    return raw_count - 1
+
+
+def _selected_atom_self_copy_is_counted(
+    *,
+    selected_atom: PreparedAtom,
+    neighbour_atoms: Iterable[TranslatedAtom],
+    threshold_squared: float,
+) -> bool:
+    """
+    Return True when the selected atom's central-cell copy is counted.
+    """
+
+    selected_x = selected_atom.record.x
+    selected_y = selected_atom.record.y
+    selected_z = selected_atom.record.z
+
+    return any(
+        neighbour_atom.source_atom_index == selected_atom.record.source_atom_index
+        and neighbour_atom.symmetry_operation_index == 1
+        and neighbour_atom.translation_a == 0
+        and neighbour_atom.translation_b == 0
+        and neighbour_atom.translation_c == 0
+        and squared_distance_to_translated_atom(
+            selected_x=selected_x,
+            selected_y=selected_y,
+            selected_z=selected_z,
+            neighbour_atom=neighbour_atom,
+        )
+        < threshold_squared
+        for neighbour_atom in neighbour_atoms
+    )
 
 
 def _count_neighbours_within_threshold_squared(

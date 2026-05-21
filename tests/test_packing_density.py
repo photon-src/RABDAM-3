@@ -69,11 +69,16 @@ def make_translated_atom(
     x: float,
     y: float,
     z: float,
+    source_atom_index: int | None = None,
 ) -> TranslatedAtom:
     return TranslatedAtom(
         translated_atom_index=translated_atom_index,
         unit_cell_atom_index=translated_atom_index,
-        source_atom_index=translated_atom_index - 1,
+        source_atom_index=(
+            translated_atom_index - 1
+            if source_atom_index is None
+            else source_atom_index
+        ),
         symmetry_operation_index=1,
         translation_a=0,
         translation_b=0,
@@ -196,9 +201,21 @@ class PackingDensityTests(unittest.TestCase):
             make_prepared_atom(source_atom_index=1, atom_serial=102, x=10.0, y=0.0, z=0.0),
         )
         neighbour_atoms = (
-            make_translated_atom(translated_atom_index=1, x=0.0, y=0.0, z=0.0),
+            make_translated_atom(
+                translated_atom_index=1,
+                source_atom_index=0,
+                x=0.0,
+                y=0.0,
+                z=0.0,
+            ),
             make_translated_atom(translated_atom_index=2, x=2.0, y=2.0, z=0.0),
-            make_translated_atom(translated_atom_index=3, x=10.0, y=0.0, z=0.0),
+            make_translated_atom(
+                translated_atom_index=3,
+                source_atom_index=1,
+                x=10.0,
+                y=0.0,
+                z=0.0,
+            ),
             make_translated_atom(translated_atom_index=4, x=13.0, y=0.0, z=0.0),
         )
 
@@ -219,12 +236,32 @@ class PackingDensityTests(unittest.TestCase):
         self.assertEqual(result.atom_results[1].source_atom_index, 1)
         self.assertEqual(result.atom_results[1].atom_serial, 102)
 
-    def test_calculate_packing_density_raises_when_self_correction_would_be_negative(self) -> None:
+    def test_calculate_packing_density_requires_counted_self_copy(self) -> None:
         selected_atoms = (
             make_prepared_atom(source_atom_index=0, x=0.0, y=0.0, z=0.0),
         )
         neighbour_atoms = (
-            make_translated_atom(translated_atom_index=1, x=10.0, y=0.0, z=0.0),
+            make_translated_atom(
+                translated_atom_index=1,
+                source_atom_index=1,
+                x=1.0,
+                y=0.0,
+                z=0.0,
+            ),
+            make_translated_atom(
+                translated_atom_index=2,
+                source_atom_index=2,
+                x=2.0,
+                y=0.0,
+                z=0.0,
+            ),
+            make_translated_atom(
+                translated_atom_index=3,
+                source_atom_index=3,
+                x=3.0,
+                y=0.0,
+                z=0.0,
+            ),
         )
 
         with self.assertRaisesRegex(
