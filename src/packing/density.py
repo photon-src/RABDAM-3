@@ -135,12 +135,13 @@ def calculate_packing_density(
             packing_density_atom_index=selected_atom_index,
             source_atom_index=selected_atom.record.source_atom_index,
             atom_serial=selected_atom.record.atom_serial,
-            neighbour_count=_count_neighbours_within_threshold_squared(
-                selected_atom=selected_atom,
-                neighbour_atoms=neighbour_atom_tuple,
-                threshold_squared=threshold_squared,
-            )
-            - 1,
+            neighbour_count=_remove_selected_atom_self_copy_from_count(
+                _count_neighbours_within_threshold_squared(
+                    selected_atom=selected_atom,
+                    neighbour_atoms=neighbour_atom_tuple,
+                    threshold_squared=threshold_squared,
+                )
+            ),
         )
         for selected_atom_index, selected_atom in enumerate(selected_atom_tuple, start=1)
     )
@@ -151,6 +152,22 @@ def calculate_packing_density(
         selected_atom_count=len(selected_atom_tuple),
         neighbour_atom_count=len(neighbour_atom_tuple),
     )
+
+
+def _remove_selected_atom_self_copy_from_count(raw_count: int) -> int:
+    """
+    Remove the selected atom's central-cell copy from a raw neighbour count.
+    """
+
+    neighbour_count = raw_count - 1
+    if neighbour_count < 0:
+        raise PackingDensityError(
+            "Packing-density count became negative after subtracting the "
+            "selected atom's central-cell copy. Check that the neighbour cloud "
+            "contains the selected atom's central-cell image."
+        )
+
+    return neighbour_count
 
 
 def _count_neighbours_within_threshold_squared(

@@ -219,6 +219,24 @@ class PackingDensityTests(unittest.TestCase):
         self.assertEqual(result.atom_results[1].source_atom_index, 1)
         self.assertEqual(result.atom_results[1].atom_serial, 102)
 
+    def test_calculate_packing_density_raises_when_self_correction_would_be_negative(self) -> None:
+        selected_atoms = (
+            make_prepared_atom(source_atom_index=0, x=0.0, y=0.0, z=0.0),
+        )
+        neighbour_atoms = (
+            make_translated_atom(translated_atom_index=1, x=10.0, y=0.0, z=0.0),
+        )
+
+        with self.assertRaisesRegex(
+            PackingDensityError,
+            "central-cell copy",
+        ):
+            calculate_packing_density(
+                selected_atoms=selected_atoms,
+                neighbour_atoms=neighbour_atoms,
+                packing_density_threshold=5.0,
+            )
+
     def test_calculate_bdamage_packing_density_wrapper_uses_selected_atoms_and_trimmed_block(self) -> None:
         selected_atoms = (
             make_prepared_atom(source_atom_index=0, x=0.0, y=0.0, z=0.0),
