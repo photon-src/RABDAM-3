@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from importlib import import_module
 import math
 
 import numpy as np
@@ -26,11 +27,6 @@ from structure.models import PreparedAtom, PreparedStructure
 
 class PackingDensityError(ValueError):
     """Raised when RABDAM cannot calculate packing density."""
-
-
-SpatialCellKey = tuple[int, int, int]
-SpatialIndex = dict[SpatialCellKey, list[TranslatedAtom]]
-ArraySpatialIndex = dict[SpatialCellKey, list[int]]
 
 
 @dataclass(frozen=True)
@@ -147,38 +143,28 @@ def calculate_packing_density(
             "Cannot calculate packing density with an empty neighbour-atom list."
         )
 
-    threshold_squared = float(packing_density_threshold) ** 2
-    spatial_index = _build_spatial_index(
-        neighbour_atom_tuple,
-        cell_size=float(packing_density_threshold),
-    )
-
-    atom_results = tuple(
-        PackingDensityAtomResult(
-            packing_density_atom_index=selected_atom_index,
-            source_atom_index=selected_atom.record.source_atom_index,
-            atom_serial=selected_atom.record.atom_serial,
-            neighbour_count=_count_neighbours_excluding_selected_atom_self_copy(
-                selected_atom=selected_atom,
-                neighbour_atoms=_nearby_neighbour_atoms(
-                    selected_atom=selected_atom,
-                    spatial_index=spatial_index,
-                    cell_size=float(packing_density_threshold),
-                ),
-                threshold_squared=threshold_squared,
-            ),
-        )
-        for selected_atom_index, selected_atom in enumerate(
-            selected_atom_tuple,
-            start=1,
-        )
-    )
-
-    return PackingDensityResult(
-        atom_results=atom_results,
+    return _calculate_packing_density_with_ckdtree(
+        selected_atoms=selected_atom_tuple,
+        neighbour_coordinates=np.asarray(
+            [(atom.x, atom.y, atom.z) for atom in neighbour_atom_tuple],
+            dtype=np.float64,
+        ),
+        source_atom_indices=np.asarray(
+            [atom.source_atom_index for atom in neighbour_atom_tuple],
+            dtype=np.int64,
+        ),
+        is_identity_symmetry_operation=np.asarray(
+            [atom.is_identity_symmetry_operation for atom in neighbour_atom_tuple],
+            dtype=np.bool_,
+        ),
+        translation_offsets=np.asarray(
+            [
+                (atom.translation_a, atom.translation_b, atom.translation_c)
+                for atom in neighbour_atom_tuple
+            ],
+            dtype=np.int64,
+        ),
         packing_density_threshold=float(packing_density_threshold),
-        selected_atom_count=len(selected_atom_tuple),
-        neighbour_atom_count=len(neighbour_atom_tuple),
     )
 
 
@@ -222,44 +208,164 @@ def calculate_packing_density_from_arrays(
         translation_offsets=offsets,
     )
 
+    return _calculate_packing_density_with_ckdtree(
+        selected_atoms=selected_atom_tuple,
+        neighbour_coordinates=coordinates,
+        source_atom_indices=source_indices,
+        is_identity_symmetry_operation=identity_flags,
+        translation_offsets=offsets,
+        packing_density_threshold=float(packing_density_threshold),
+    )
+
+
+def _calculate_packing_density_with_ckdtree(
+    *,
+    selected_atoms: tuple[PreparedAtom, ...],
+    neighbour_coordinates: np.ndarray,
+    source_atom_indices: np.ndarray,
+    is_identity_symmetry_operation: np.ndarray,
+    translation_offsets: np.ndarray,
+    packing_density_threshold: float,
+) -> PackingDensityResult:
+    """
+    Count neighbours with scipy.spatial.cKDTree.
+    """
+
     threshold = float(packing_density_threshold)
     threshold_squared = threshold**2
-    spatial_index = _build_array_spatial_index(
-        coordinates,
-        cell_size=threshold,
+    selected_coordinates = _selected_atom_coordinates(selected_atoms)
+    _validate_array_self_copies_are_counted(
+        selected_atoms=selected_atoms,
+        selected_coordinates=selected_coordinates,
+        neighbour_coordinates=neighbour_coordinates,
+        source_atom_indices=source_atom_indices,
+        is_identity_symmetry_operation=is_identity_symmetry_operation,
+        translation_offsets=translation_offsets,
+        threshold_squared=threshold_squared,
     )
 
-    atom_results = tuple(
-        PackingDensityAtomResult(
-            packing_density_atom_index=selected_atom_index,
-            source_atom_index=selected_atom.record.source_atom_index,
-            atom_serial=selected_atom.record.atom_serial,
-            neighbour_count=_count_array_neighbours_excluding_selected_atom_self_copy(
-                selected_atom=selected_atom,
-                neighbour_coordinates=coordinates,
-                source_atom_indices=source_indices,
-                is_identity_symmetry_operation=identity_flags,
-                translation_offsets=offsets,
-                neighbour_indices=_nearby_neighbour_indices(
-                    selected_atom=selected_atom,
-                    spatial_index=spatial_index,
-                    cell_size=threshold,
-                ),
-                threshold_squared=threshold_squared,
-            ),
-        )
-        for selected_atom_index, selected_atom in enumerate(
-            selected_atom_tuple,
-            start=1,
-        )
+    tree = _build_ckdtree(neighbour_coordinates)
+    strict_radius = float(np.nextafter(threshold, 0.0))
+    raw_counts = tree.query_ball_point(
+        selected_coordinates,
+        strict_radius,
+        return_length=True,
+        workers=-1,
     )
+    neighbour_counts = np.asarray(raw_counts, dtype=np.int64).reshape(-1) - 1
 
     return PackingDensityResult(
-        atom_results=atom_results,
+        atom_results=tuple(
+            PackingDensityAtomResult(
+                packing_density_atom_index=selected_atom_index,
+                source_atom_index=selected_atom.record.source_atom_index,
+                atom_serial=selected_atom.record.atom_serial,
+                neighbour_count=int(neighbour_count),
+            )
+            for selected_atom_index, (selected_atom, neighbour_count) in enumerate(
+                zip(selected_atoms, neighbour_counts, strict=True),
+                start=1,
+            )
+        ),
         packing_density_threshold=threshold,
-        selected_atom_count=len(selected_atom_tuple),
-        neighbour_atom_count=int(coordinates.shape[0]),
+        selected_atom_count=len(selected_atoms),
+        neighbour_atom_count=int(neighbour_coordinates.shape[0]),
     )
+
+
+def _build_ckdtree(neighbour_coordinates: np.ndarray):
+    """Return a SciPy cKDTree for neighbour coordinates."""
+
+    try:
+        scipy_spatial = import_module("scipy.spatial")
+    except ImportError as error:
+        raise PackingDensityError(
+            "SciPy is required for packing-density calculation."
+        ) from error
+
+    ckdtree_class = getattr(scipy_spatial, "cKDTree", None)
+    if ckdtree_class is None:
+        raise PackingDensityError(
+            "SciPy is installed but scipy.spatial.cKDTree is unavailable."
+        )
+
+    return ckdtree_class(neighbour_coordinates)
+
+
+def _selected_atom_coordinates(
+    selected_atoms: tuple[PreparedAtom, ...],
+) -> np.ndarray:
+    """Return selected-atom coordinates as a float64 array."""
+
+    return np.asarray(
+        [
+            (atom.record.x, atom.record.y, atom.record.z)
+            for atom in selected_atoms
+        ],
+        dtype=np.float64,
+    )
+
+
+def _validate_array_self_copies_are_counted(
+    *,
+    selected_atoms: tuple[PreparedAtom, ...],
+    selected_coordinates: np.ndarray,
+    neighbour_coordinates: np.ndarray,
+    source_atom_indices: np.ndarray,
+    is_identity_symmetry_operation: np.ndarray,
+    translation_offsets: np.ndarray,
+    threshold_squared: float,
+) -> None:
+    """Verify each selected atom's central-cell self copy can be subtracted."""
+
+    if not math.isfinite(threshold_squared) or threshold_squared < 0:
+        raise PackingDensityError(
+            "threshold_squared must be a finite non-negative number, "
+            f"got {threshold_squared!r}."
+        )
+
+    central_cell_identity_indices = np.flatnonzero(
+        is_identity_symmetry_operation
+        & np.all(translation_offsets == 0, axis=1)
+    )
+    candidate_indices_by_source_atom: dict[int, list[int]] = {}
+    for neighbour_index in central_cell_identity_indices:
+        source_atom_index = int(source_atom_indices[neighbour_index])
+        candidate_indices_by_source_atom.setdefault(source_atom_index, []).append(
+            int(neighbour_index)
+        )
+
+    for selected_atom_index, selected_atom in enumerate(selected_atoms):
+        candidate_indices = candidate_indices_by_source_atom.get(
+            selected_atom.record.source_atom_index,
+            [],
+        )
+        if not candidate_indices:
+            raise PackingDensityError(
+                "Cannot subtract the selected atom's central-cell copy from the "
+                "packing-density count because that copy was not counted. Check "
+                "that the neighbour cloud contains the selected atom's central-cell "
+                "image."
+            )
+
+        candidate_coordinates = neighbour_coordinates[
+            np.asarray(candidate_indices, dtype=np.int64)
+        ]
+        coordinate_deltas = (
+            selected_coordinates[selected_atom_index] - candidate_coordinates
+        )
+        distances_squared = np.einsum(
+            "ij,ij->i",
+            coordinate_deltas,
+            coordinate_deltas,
+        )
+        if not bool(np.any(distances_squared < threshold_squared)):
+            raise PackingDensityError(
+                "Cannot subtract the selected atom's central-cell copy from the "
+                "packing-density count because that copy was not counted. Check "
+                "that the neighbour cloud contains the selected atom's central-cell "
+                "image."
+            )
 
 
 def _validate_neighbour_arrays(
@@ -297,283 +403,6 @@ def _validate_neighbour_arrays(
         raise PackingDensityError(
             "translation_offsets must have shape (n, 3) matching coordinates."
         )
-
-
-def _build_spatial_index(
-    neighbour_atoms: Iterable[TranslatedAtom],
-    *,
-    cell_size: float,
-) -> SpatialIndex:
-    """Bucket neighbour atoms into cubic cells with edge length cell_size."""
-
-    spatial_index: SpatialIndex = {}
-    for neighbour_atom in neighbour_atoms:
-        cell_key = _spatial_cell_key(
-            x=neighbour_atom.x,
-            y=neighbour_atom.y,
-            z=neighbour_atom.z,
-            cell_size=cell_size,
-        )
-        spatial_index.setdefault(cell_key, []).append(neighbour_atom)
-
-    return spatial_index
-
-
-def _build_array_spatial_index(
-    neighbour_coordinates: np.ndarray,
-    *,
-    cell_size: float,
-) -> ArraySpatialIndex:
-    """Bucket array-backed neighbour atoms into cubic cells."""
-
-    spatial_index: ArraySpatialIndex = {}
-    cell_coordinates = np.floor(neighbour_coordinates / cell_size).astype(np.int64)
-    for neighbour_index, cell_coordinate in enumerate(cell_coordinates):
-        cell_key = (
-            int(cell_coordinate[0]),
-            int(cell_coordinate[1]),
-            int(cell_coordinate[2]),
-        )
-        spatial_index.setdefault(cell_key, []).append(neighbour_index)
-
-    return spatial_index
-
-
-def _nearby_neighbour_atoms(
-    *,
-    selected_atom: PreparedAtom,
-    spatial_index: SpatialIndex,
-    cell_size: float,
-) -> tuple[TranslatedAtom, ...]:
-    """
-    Return atoms from spatial cells that can contain threshold-distance neighbours.
-    """
-
-    selected_cell_key = _spatial_cell_key(
-        x=selected_atom.record.x,
-        y=selected_atom.record.y,
-        z=selected_atom.record.z,
-        cell_size=cell_size,
-    )
-    selected_cell_x, selected_cell_y, selected_cell_z = selected_cell_key
-
-    nearby_atoms: list[TranslatedAtom] = []
-    for cell_x in range(selected_cell_x - 1, selected_cell_x + 2):
-        for cell_y in range(selected_cell_y - 1, selected_cell_y + 2):
-            for cell_z in range(selected_cell_z - 1, selected_cell_z + 2):
-                nearby_atoms.extend(spatial_index.get((cell_x, cell_y, cell_z), ()))
-
-    return tuple(nearby_atoms)
-
-
-def _nearby_neighbour_indices(
-    *,
-    selected_atom: PreparedAtom,
-    spatial_index: ArraySpatialIndex,
-    cell_size: float,
-) -> np.ndarray:
-    """
-    Return array indices from cells that can contain threshold-distance neighbours.
-    """
-
-    selected_cell_key = _spatial_cell_key(
-        x=selected_atom.record.x,
-        y=selected_atom.record.y,
-        z=selected_atom.record.z,
-        cell_size=cell_size,
-    )
-    selected_cell_x, selected_cell_y, selected_cell_z = selected_cell_key
-
-    nearby_indices: list[int] = []
-    for cell_x in range(selected_cell_x - 1, selected_cell_x + 2):
-        for cell_y in range(selected_cell_y - 1, selected_cell_y + 2):
-            for cell_z in range(selected_cell_z - 1, selected_cell_z + 2):
-                nearby_indices.extend(spatial_index.get((cell_x, cell_y, cell_z), ()))
-
-    return np.asarray(nearby_indices, dtype=np.int64)
-
-
-def _spatial_cell_key(
-    *,
-    x: float,
-    y: float,
-    z: float,
-    cell_size: float,
-) -> SpatialCellKey:
-    """Return the spatial-grid cell containing one Cartesian coordinate."""
-
-    return (
-        math.floor(x / cell_size),
-        math.floor(y / cell_size),
-        math.floor(z / cell_size),
-    )
-
-
-def _count_neighbours_excluding_selected_atom_self_copy(
-    *,
-    selected_atom: PreparedAtom,
-    neighbour_atoms: Iterable[TranslatedAtom],
-    threshold_squared: float,
-) -> int:
-    """
-    Count neighbours, then remove the selected atom's central-cell copy.
-    """
-
-    raw_count = _count_neighbours_within_threshold_squared(
-        selected_atom=selected_atom,
-        neighbour_atoms=neighbour_atoms,
-        threshold_squared=threshold_squared,
-    )
-    if not _selected_atom_self_copy_is_counted(
-        selected_atom=selected_atom,
-        neighbour_atoms=neighbour_atoms,
-        threshold_squared=threshold_squared,
-    ):
-        raise PackingDensityError(
-            "Cannot subtract the selected atom's central-cell copy from the "
-            "packing-density count because that copy was not counted. Check "
-            "that the neighbour cloud contains the selected atom's central-cell "
-            "image."
-        )
-
-    return raw_count - 1
-
-
-def _count_array_neighbours_excluding_selected_atom_self_copy(
-    *,
-    selected_atom: PreparedAtom,
-    neighbour_coordinates: np.ndarray,
-    source_atom_indices: np.ndarray,
-    is_identity_symmetry_operation: np.ndarray,
-    translation_offsets: np.ndarray,
-    neighbour_indices: np.ndarray,
-    threshold_squared: float,
-) -> int:
-    """
-    Count array-backed neighbours, then remove the selected atom's self copy.
-    """
-
-    if not math.isfinite(threshold_squared) or threshold_squared < 0:
-        raise PackingDensityError(
-            "threshold_squared must be a finite non-negative number, "
-            f"got {threshold_squared!r}."
-        )
-
-    if neighbour_indices.size == 0:
-        raise PackingDensityError(
-            "Cannot subtract the selected atom's central-cell copy from the "
-            "packing-density count because that copy was not counted. Check "
-            "that the neighbour cloud contains the selected atom's central-cell "
-            "image."
-        )
-
-    selected_coordinates = np.asarray(
-        (
-            selected_atom.record.x,
-            selected_atom.record.y,
-            selected_atom.record.z,
-        ),
-        dtype=np.float64,
-    )
-    nearby_coordinates = neighbour_coordinates[neighbour_indices]
-    coordinate_deltas = selected_coordinates - nearby_coordinates
-    distances_squared = np.einsum(
-        "ij,ij->i",
-        coordinate_deltas,
-        coordinate_deltas,
-    )
-    is_within_threshold = distances_squared < threshold_squared
-    raw_count = int(np.count_nonzero(is_within_threshold))
-
-    zero_translation_offsets = np.all(
-        translation_offsets[neighbour_indices] == 0,
-        axis=1,
-    )
-    selected_atom_self_copies = (
-        (
-            source_atom_indices[neighbour_indices]
-            == selected_atom.record.source_atom_index
-        )
-        & is_identity_symmetry_operation[neighbour_indices]
-        & zero_translation_offsets
-        & is_within_threshold
-    )
-    if not bool(np.any(selected_atom_self_copies)):
-        raise PackingDensityError(
-            "Cannot subtract the selected atom's central-cell copy from the "
-            "packing-density count because that copy was not counted. Check "
-            "that the neighbour cloud contains the selected atom's central-cell "
-            "image."
-        )
-
-    return raw_count - 1
-
-
-def _selected_atom_self_copy_is_counted(
-    *,
-    selected_atom: PreparedAtom,
-    neighbour_atoms: Iterable[TranslatedAtom],
-    threshold_squared: float,
-) -> bool:
-    """
-    Return True when the selected atom's central-cell copy is counted.
-    """
-
-    selected_x = selected_atom.record.x
-    selected_y = selected_atom.record.y
-    selected_z = selected_atom.record.z
-
-    return any(
-        neighbour_atom.source_atom_index == selected_atom.record.source_atom_index
-        and neighbour_atom.is_identity_symmetry_operation
-        and neighbour_atom.translation_a == 0
-        and neighbour_atom.translation_b == 0
-        and neighbour_atom.translation_c == 0
-        and squared_distance_to_translated_atom(
-            selected_x=selected_x,
-            selected_y=selected_y,
-            selected_z=selected_z,
-            neighbour_atom=neighbour_atom,
-        )
-        < threshold_squared
-        for neighbour_atom in neighbour_atoms
-    )
-
-
-def _count_neighbours_within_threshold_squared(
-    *,
-    selected_atom: PreparedAtom,
-    neighbour_atoms: Iterable[TranslatedAtom],
-    threshold_squared: float,
-) -> int:
-    """
-    Count neighbours whose squared Cartesian distance is < threshold_squared.
-
-    Squared distances are used to avoid square-root calculations while producing
-    the same inclusion result as comparing true Euclidean distances.
-    """
-
-    if not math.isfinite(threshold_squared) or threshold_squared < 0:
-        raise PackingDensityError(
-            "threshold_squared must be a finite non-negative number, "
-            f"got {threshold_squared!r}."
-        )
-
-    selected_x = selected_atom.record.x
-    selected_y = selected_atom.record.y
-    selected_z = selected_atom.record.z
-
-    count = 0
-    for neighbour_atom in neighbour_atoms:
-        if squared_distance_to_translated_atom(
-            selected_x=selected_x,
-            selected_y=selected_y,
-            selected_z=selected_z,
-            neighbour_atom=neighbour_atom,
-        ) < threshold_squared:
-            count += 1
-
-    return count
 
 
 def squared_distance_to_translated_atom(

@@ -16,9 +16,9 @@ from input.reader import AtomRecord, StructureMetadata
 from input.resolver import StructureFileFormat
 from packing.density import (
     PackingDensityError,
-    _count_neighbours_within_threshold_squared,
     calculate_bdamage_packing_density,
     calculate_packing_density,
+    calculate_packing_density_from_arrays,
     packing_density_counts_as_tuple,
     squared_distance_to_translated_atom,
 )
@@ -223,26 +223,41 @@ class PackingDensityTests(unittest.TestCase):
 
         self.assertEqual(distance_squared, 50.0)
 
-    def test_count_neighbours_excludes_atoms_on_threshold_boundary(self) -> None:
-        selected_atom = make_prepared_atom(
-            source_atom_index=0,
-            x=0.0,
-            y=0.0,
-            z=0.0,
+    def test_calculate_packing_density_excludes_atoms_on_threshold_boundary(self) -> None:
+        selected_atoms = (
+            make_prepared_atom(source_atom_index=0, x=0.0, y=0.0, z=0.0),
         )
         neighbours = (
-            make_translated_atom(translated_atom_index=1, x=0.0, y=0.0, z=0.0),
-            make_translated_atom(translated_atom_index=2, x=3.0, y=4.0, z=0.0),
-            make_translated_atom(translated_atom_index=3, x=5.1, y=0.0, z=0.0),
+            make_translated_atom(
+                translated_atom_index=1,
+                source_atom_index=0,
+                x=0.0,
+                y=0.0,
+                z=0.0,
+            ),
+            make_translated_atom(
+                translated_atom_index=2,
+                source_atom_index=1,
+                x=3.0,
+                y=4.0,
+                z=0.0,
+            ),
+            make_translated_atom(
+                translated_atom_index=3,
+                source_atom_index=2,
+                x=float(np.nextafter(5.0, 0.0)),
+                y=0.0,
+                z=0.0,
+            ),
         )
 
-        count = _count_neighbours_within_threshold_squared(
-            selected_atom=selected_atom,
+        result = calculate_packing_density(
+            selected_atoms=selected_atoms,
             neighbour_atoms=neighbours,
-            threshold_squared=25.0,
+            packing_density_threshold=5.0,
         )
 
-        self.assertEqual(count, 1)
+        self.assertEqual(packing_density_counts_as_tuple(result), (1,))
 
     def test_calculate_packing_density_counts_each_selected_atom_after_self_correction(self) -> None:
         selected_atoms = (
@@ -416,6 +431,48 @@ class PackingDensityTests(unittest.TestCase):
         )
         self.assertEqual(array_result.neighbour_atom_count, 4)
 
+    def test_array_packing_density_excludes_atoms_on_threshold_boundary(self) -> None:
+        selected_atoms = (
+            make_prepared_atom(source_atom_index=0, x=0.0, y=0.0, z=0.0),
+        )
+        atoms = (
+            make_translated_atom(
+                translated_atom_index=1,
+                source_atom_index=0,
+                x=0.0,
+                y=0.0,
+                z=0.0,
+            ),
+            make_translated_atom(
+                translated_atom_index=2,
+                source_atom_index=1,
+                x=3.0,
+                y=4.0,
+                z=0.0,
+            ),
+            make_translated_atom(
+                translated_atom_index=3,
+                source_atom_index=2,
+                x=float(np.nextafter(5.0, 0.0)),
+                y=0.0,
+                z=0.0,
+            ),
+        )
+        trimmed_block = make_array_trimmed_block(atoms)
+
+        result = calculate_packing_density_from_arrays(
+            selected_atoms=selected_atoms,
+            neighbour_coordinates=trimmed_block.coordinates,
+            source_atom_indices=trimmed_block.source_atom_indices,
+            is_identity_symmetry_operation=(
+                trimmed_block.is_identity_symmetry_operation
+            ),
+            translation_offsets=trimmed_block.translation_offsets,
+            packing_density_threshold=5.0,
+        )
+
+        self.assertEqual(packing_density_counts_as_tuple(result), (1,))
+
     def test_array_packing_density_requires_counted_self_copy(self) -> None:
         selected_atoms = (
             make_prepared_atom(source_atom_index=0, x=0.0, y=0.0, z=0.0),
@@ -483,25 +540,6 @@ class PackingDensityTests(unittest.TestCase):
                 neighbour_atoms=(),
                 packing_density_threshold=7.5,
             )
-
-    def test_negative_threshold_squared_raises(self) -> None:
-        with self.assertRaises(PackingDensityError):
-            _count_neighbours_within_threshold_squared(
-                selected_atom=make_prepared_atom(source_atom_index=0, x=0.0, y=0.0, z=0.0),
-                neighbour_atoms=(),
-                threshold_squared=-1.0,
-            )
-
-    def test_non_finite_threshold_squared_raises(self) -> None:
-        for threshold_squared in (math.nan, math.inf, -math.inf):
-            with self.subTest(threshold_squared=threshold_squared):
-                with self.assertRaises(PackingDensityError):
-                    _count_neighbours_within_threshold_squared(
-                        selected_atom=make_prepared_atom(source_atom_index=0, x=0.0, y=0.0, z=0.0),
-                        neighbour_atoms=(),
-                        threshold_squared=threshold_squared,
-                    )
-
 
 if __name__ == "__main__":
     unittest.main()
