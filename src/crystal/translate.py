@@ -22,7 +22,7 @@ class CrystalTranslationError(ValueError):
     """Raised when RABDAM cannot translate a symmetry-expanded unit cell."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CartesianVector:
     """A Cartesian vector in Angstroms."""
 
@@ -31,7 +31,7 @@ class CartesianVector:
     z: float
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class UnitCellTranslationVectors:
     """
     Cartesian translation vectors for one full step along a, b, and c.
@@ -47,7 +47,7 @@ class UnitCellTranslationVectors:
     c: CartesianVector
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TranslatedAtom:
     """
     One atom in the translated 3x3x3 crystal block.
@@ -91,7 +91,7 @@ class TranslatedAtom:
     z: float
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TranslatedCrystalBlock:
     """
     Symmetry-expanded unit-cell atoms translated into neighbouring cells.

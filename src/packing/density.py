@@ -29,7 +29,7 @@ class PackingDensityError(ValueError):
     """Raised when RABDAM cannot calculate packing density."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PackingDensityAtomResult:
     """
     Packing-density result for one selected asymmetric-unit atom.
@@ -55,7 +55,7 @@ class PackingDensityAtomResult:
     neighbour_count: int
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PackingDensityResult:
     """
     Packing-density counts for the selected BDamage atoms.

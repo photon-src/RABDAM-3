@@ -40,7 +40,7 @@ class BDamageWorkflowError(ValueError):
     """Raised when RABDAM cannot run the end-to-end BDamage workflow."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BDamageWorkflowOptions:
     """
     Options controlling the end-to-end BDamage workflow.
@@ -70,7 +70,7 @@ class BDamageWorkflowOptions:
     materialize_translated_block: bool = False
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BDamageWorkflowResult:
     """
     Complete result of an end-to-end BDamage calculation.

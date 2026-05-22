@@ -15,7 +15,7 @@ import math
 from input.reader import AtomRecord
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class AtomFilterCounts:
     """Counts of atoms removed by the basic cleaning pass."""
 
@@ -25,7 +25,7 @@ class AtomFilterCounts:
     invalid_b_factor: int = 0
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class AtomFilterResult:
     """Result of the basic atom-cleaning pass."""
 

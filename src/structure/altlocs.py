@@ -8,7 +8,7 @@ from input.reader import AtomRecord
 from structure.models import StructurePreparationOptions
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class AltlocSelectionResult:
     """Result of alternate-conformer selection."""
 

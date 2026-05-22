@@ -55,7 +55,7 @@ class StructureFileFormat(str, Enum):
     PDB = "pdb"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ResolvedStructureInput:
     """
     A normalized description of one structure input.

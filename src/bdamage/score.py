@@ -31,7 +31,7 @@ class BDamageScoreError(ValueError):
     """Raised when RABDAM cannot calculate BDamage scores."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BDamageAtomInput:
     """
     Minimal input needed to calculate BDamage for one selected atom.
@@ -59,7 +59,7 @@ class BDamageAtomInput:
     packing_density: int
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BDamageAtomResult:
     """
     BDamage result for one selected asymmetric-unit atom.
@@ -101,7 +101,7 @@ class BDamageAtomResult:
     sorted_packing_density_index: int
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BDamageScoreResult:
     """
     BDamage scores for selected atoms.

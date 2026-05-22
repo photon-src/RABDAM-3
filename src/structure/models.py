@@ -14,7 +14,7 @@ class StructurePreparationError(ValueError):
     """Raised when RABDAM cannot prepare structure data for calculation."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class StructurePreparationOptions:
     """
     Options controlling structure preparation.
@@ -37,7 +37,7 @@ class StructurePreparationOptions:
     add_component_names: frozenset[str] = frozenset()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PreparedAtom:
     """
     An atom record with structure-preparation annotations.
@@ -51,7 +51,7 @@ class PreparedAtom:
     is_hetatm: bool
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class StructurePreparationReport:
     """
     Counts and warnings produced during structure preparation.
@@ -68,7 +68,7 @@ class StructurePreparationReport:
     warnings: tuple[str, ...] = ()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PreparedStructure:
     """
     Prepared structure data for later RABDAM stages.

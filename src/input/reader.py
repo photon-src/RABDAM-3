@@ -23,7 +23,7 @@ class StructureReadError(InputResolutionError):
     """Raised when RABDAM cannot read a local structure file."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class AtomRecord:
     """
     One atom record read from a structure file.
@@ -51,7 +51,7 @@ class AtomRecord:
     record_type: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class StructureMetadata:
     """Basic metadata read from a structure file."""
 
@@ -67,7 +67,7 @@ class StructureMetadata:
     unit_cell_gamma: float | None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class StructureData:
     """Structure data passed from the input layer to later RABDAM stages."""
 

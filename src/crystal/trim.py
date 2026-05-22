@@ -41,7 +41,7 @@ class CrystalTrimError(ValueError):
     """Raised when RABDAM cannot trim a translated crystal block."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CartesianBounds:
     """
     Axis-aligned Cartesian coordinate bounds in Angstroms.
@@ -59,7 +59,7 @@ class CartesianBounds:
     z_max: float
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TrimmedCrystalBlock:
     """
     Translated crystal block after neighbour-box trimming.
@@ -95,7 +95,7 @@ class TrimmedCrystalBlock:
         return len(self.atoms)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ArrayTrimmedCrystalBlock:
     """
     NumPy-backed translated crystal block after neighbour-box trimming.

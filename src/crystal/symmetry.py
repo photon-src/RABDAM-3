@@ -22,7 +22,7 @@ class CrystalSymmetryError(ValueError):
     """Raised when RABDAM cannot build crystallographic symmetry images."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class UnitCellParameters:
     """Unit-cell parameters in Angstroms and degrees."""
 
@@ -34,7 +34,7 @@ class UnitCellParameters:
     gamma: float
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SymmetryExpandedAtom:
     """
     One atom after applying crystallographic symmetry to the prepared structure.
@@ -65,7 +65,7 @@ class SymmetryExpandedAtom:
     z: float
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SymmetryExpandedStructure:
     """Symmetry-expanded unit-cell coordinates for all cleaned atoms."""
 
