@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
+from bnet.calculate import ProteinBnetResult
 from bnet.metric import BnetResult
 from bnet.sites import BnetSite, ProteinBnetSiteSelection
 from bdamage.score import BDamageAtomInput, BDamageAtomResult, BDamageScoreResult
@@ -226,11 +227,17 @@ class DataclassSlotsTests(unittest.TestCase):
             atom_name="OD1",
             bdamage=1.2,
         )
+        bnet_site_selection = ProteinBnetSiteSelection(sites=(bnet_site,))
+        protein_bnet_result = ProteinBnetResult(
+            metric=bnet_result,
+            site_selection=bnet_site_selection,
+        )
 
         instances = (
             bnet_result,
             bnet_site,
-            ProteinBnetSiteSelection(sites=(bnet_site,)),
+            bnet_site_selection,
+            protein_bnet_result,
             ResolvedStructureInput(
                 original_input="example.cif",
                 source_type=StructureSourceType.LOCAL_FILE,
