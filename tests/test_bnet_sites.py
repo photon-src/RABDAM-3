@@ -131,14 +131,14 @@ class BnetSiteSelectionTests(unittest.TestCase):
                     )
                 )
 
-    def test_is_protein_bnet_site_uses_legacy_residue_and_atom_sets(self) -> None:
-        self.assertTrue(is_protein_bnet_site(residue_name="ASP", atom_name="OE1"))
-        self.assertTrue(is_protein_bnet_site(residue_name="GLU", atom_name="OD1"))
-
     def test_is_protein_bnet_site_rejects_non_sites(self) -> None:
         false_cases = (
             ("ASP", "CG"),
+            ("ASP", "OE1"),
+            ("ASP", "OE2"),
             ("GLU", "CD"),
+            ("GLU", "OD1"),
+            ("GLU", "OD2"),
             ("ASH", "OD1"),
             ("GLH", "OE1"),
             ("ASN", "OD1"),

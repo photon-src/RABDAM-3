@@ -16,11 +16,9 @@ from structure.models import PreparedAtom, PreparedStructure
 
 ASPARTATE_BNET_RESIDUES = frozenset({"ASP", "DAS"})
 GLUTAMATE_BNET_RESIDUES = frozenset({"GLU", "DGL"})
-PROTEIN_BNET_RESIDUES = ASPARTATE_BNET_RESIDUES | GLUTAMATE_BNET_RESIDUES
 
 ASPARTATE_BNET_ATOMS = frozenset({"OD1", "OD2"})
 GLUTAMATE_BNET_ATOMS = frozenset({"OE1", "OE2"})
-PROTEIN_BNET_ATOMS = ASPARTATE_BNET_ATOMS | GLUTAMATE_BNET_ATOMS
 
 
 class BnetSiteSelectionError(ValueError):
@@ -168,10 +166,13 @@ def is_protein_bnet_site(*, residue_name: str, atom_name: str) -> bool:
     residue_name = residue_name.strip().upper()
     atom_name = atom_name.strip().upper()
 
-    # Protein Bnet site selection follows the legacy residue-name and atom-name
-    # sets exactly. Protein-like protonation variants such as ASH and GLH are
-    # intentionally not included here.
-    return residue_name in PROTEIN_BNET_RESIDUES and atom_name in PROTEIN_BNET_ATOMS
+    if residue_name in ASPARTATE_BNET_RESIDUES:
+        return atom_name in ASPARTATE_BNET_ATOMS
+
+    if residue_name in GLUTAMATE_BNET_RESIDUES:
+        return atom_name in GLUTAMATE_BNET_ATOMS
+
+    return False
 
 
 def _validate_atom_matches_bdamage_result(
