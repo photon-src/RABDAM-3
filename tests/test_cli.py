@@ -3,6 +3,7 @@ from io import StringIO
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from bdamage.score import BDamageAtomResult, BDamageScoreResult
 from input.reader import AtomRecord, StructureMetadata
@@ -152,6 +153,37 @@ class CliArgumentTests(unittest.TestCase):
         self.assertEqual(stdout.getvalue(), "")
         self.assertIn("rabdam: error:", stderr.getvalue())
         self.assertIn("Could not resolve structure input", stderr.getvalue())
+
+    def test_success_reports_total_runtime(self) -> None:
+        stdout = StringIO()
+        stderr = StringIO()
+
+        with (
+            patch("rabdam.cli.perf_counter", side_effect=[1.0, 3.34]),
+            patch("rabdam.cli.run_from_args") as run_from_args,
+        ):
+            exit_code = main(["example.cif"], stdout=stdout, stderr=stderr)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("Total runtime: 2.3s", stderr.getvalue())
+        run_from_args.assert_called_once()
+
+    def test_quiet_success_suppresses_total_runtime(self) -> None:
+        stdout = StringIO()
+        stderr = StringIO()
+
+        with patch("rabdam.cli.run_from_args") as run_from_args:
+            exit_code = main(
+                ["example.cif", "--quiet"],
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(stderr.getvalue(), "")
+        run_from_args.assert_called_once()
 
 
 class BDamageCsvWriterTests(unittest.TestCase):

@@ -391,6 +391,13 @@ def run_stage(
     return result
 
 
+def print_total_runtime(start: float, *, stream: TextIO) -> None:
+    """Print the total elapsed CLI runtime."""
+
+    elapsed = perf_counter() - start
+    print(f"Total runtime: {elapsed:.1f}s", file=stream, flush=True)
+
+
 def write_bdamage_csv(
     *,
     output_path: Path,
@@ -489,6 +496,7 @@ def main(
 ) -> int:
     """Run the RABDAM command-line interface."""
 
+    start = perf_counter()
     args = parse_args(argv)
 
     try:
@@ -496,6 +504,9 @@ def main(
     except RABDAM_CLI_ERRORS as error:
         print(f"rabdam: error: {error}", file=stderr)
         return 1
+    finally:
+        if not args.quiet:
+            print_total_runtime(start, stream=stderr)
 
     return 0
 
