@@ -10,7 +10,7 @@ from bnet.metric import (
 
 
 class BnetMetricTests(unittest.TestCase):
-    def test_calculate_bnet_matches_rabdam2_reference_values(self) -> None:
+    def test_calculate_bnet_matches_reference_values(self) -> None:
         cases = (
             (
                 (0.8, 0.9, 1.0, 1.1, 1.2),
@@ -51,7 +51,7 @@ class BnetMetricTests(unittest.TestCase):
         self.assertAlmostEqual(result.left_area, 0.12345074451835888, places=12)
         self.assertAlmostEqual(result.right_area, 0.8748824859457471, places=12)
 
-    def test_split_trapezium_areas_uses_rabdam2_left_edge_rule(self) -> None:
+    def test_split_trapezium_areas_uses_left_edge_rule(self) -> None:
         left_area, right_area = _split_trapezium_areas(
             x_values=np.array([0.0, 1.0, 2.0]),
             y_values=np.array([1.0, 1.0, 1.0]),
@@ -87,7 +87,7 @@ class BnetMetricTests(unittest.TestCase):
                     calculate_bnet(**kwargs)
 
     def test_invalid_trapezium_count_raises_value_error(self) -> None:
-        for trapezium_count in (0, -1, 1.5):
+        for trapezium_count in (0, -1, 1.5, True):
             with self.subTest(trapezium_count=trapezium_count):
                 with self.assertRaises(ValueError):
                     calculate_bnet(
@@ -95,3 +95,12 @@ class BnetMetricTests(unittest.TestCase):
                         bnet_site_bdamage_values=(0.7, 1.2),
                         trapezium_count=trapezium_count,
                     )
+
+    def test_numpy_integer_trapezium_count_is_accepted(self) -> None:
+        result = calculate_bnet(
+            all_bdamage_values=(0.8, 0.9, 1.0, 1.1, 1.2),
+            bnet_site_bdamage_values=(0.7, 0.9, 1.2, 1.8, 2.1),
+            trapezium_count=np.int64(99),
+        )
+
+        self.assertAlmostEqual(result.bnet, 1.9029557835725344, places=12)

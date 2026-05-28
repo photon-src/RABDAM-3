@@ -7,6 +7,7 @@ against the median BDamage value for all scored atoms in the structure.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from numbers import Integral
 from typing import Sequence
 
 import numpy as np
@@ -80,16 +81,20 @@ def calculate_bnet(
             "Cannot calculate Bnet from fewer than two Bnet-site BDamage values."
         )
 
-    if type(trapezium_count) is not int or trapezium_count < 1:
-        raise ValueError("trapezium_count must be a positive integer.")
+    trapezium_count = _as_positive_integer(
+        trapezium_count,
+        name="trapezium_count",
+    )
 
     median_bdamage = float(np.median(all_values))
 
+    kde = _build_gaussian_kde_scott(site_values)
     x_values = _bnet_kde_x_values(
         site_values,
+        kde,
         trapezium_count=trapezium_count,
     )
-    y_values = _gaussian_kde_scott_1d(site_values, x_values)
+    y_values = kde(x_values)
 
     left_area, right_area = _split_trapezium_areas(
         x_values=x_values,
@@ -128,24 +133,31 @@ def _as_finite_1d_array(values: Sequence[float], *, name: str) -> np.ndarray:
     return array
 
 
-def _gaussian_kde_scott_1d(
+def _as_positive_integer(value: object, *, name: str) -> int:
+    """Return value as an int after validating it is a positive integer."""
+
+    if isinstance(value, bool) or not isinstance(value, Integral) or value < 1:
+        raise ValueError(f"{name} must be a positive integer.")
+
+    return int(value)
+
+
+def _build_gaussian_kde_scott(
     sample_values: np.ndarray,
-    evaluation_points: np.ndarray,
-) -> np.ndarray:
-    """Evaluate a one-dimensional Gaussian KDE using Scott's bandwidth rule."""
+) -> gaussian_kde:
+    """Build a one-dimensional Gaussian KDE using Scott's bandwidth rule."""
 
     try:
-        kde = gaussian_kde(dataset=sample_values, bw_method="scott")
+        return gaussian_kde(dataset=sample_values, bw_method="scott")
     except np.linalg.LinAlgError as error:
         raise ValueError(
             "Cannot calculate KDE because Bnet-site values have zero variance."
         ) from error
 
-    return kde(evaluation_points)
-
 
 def _bnet_kde_x_values(
     sample_values: np.ndarray,
+    kde: gaussian_kde,
     *,
     trapezium_count: int,
 ) -> np.ndarray:
@@ -158,7 +170,7 @@ def _bnet_kde_x_values(
             "Cannot calculate KDE because Bnet-site values have zero variance."
         )
 
-    scott_factor = float(gaussian_kde(dataset=sample_values).scotts_factor())
+    scott_factor = float(kde.scotts_factor())
     tail_width = scott_factor * sample_standard_deviation
 
     x_min = float(np.min(sample_values) - (DEFAULT_KDE_TAIL_WIDTHS * tail_width))
