@@ -351,7 +351,6 @@ _RESOLUTION_CIF_TAGS = frozenset(
     {
         "_refine.ls_d_res_high",
         "_reflns.d_resolution_high",
-        "_em_3d_reconstruction.resolution",
     }
 )
 

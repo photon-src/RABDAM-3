@@ -159,6 +159,23 @@ class PdbRedoMetadataTests(unittest.TestCase):
         self.assertIsNone(metadata.resolution_angstrom)
         self.assertIsNone(metadata.resolution_source)
 
+    def test_em_resolution_tag_is_not_used_for_pdb_redo_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            candidate = write_candidate_files(
+                Path(temp_dir),
+                data_json=False,
+                final_cif_text=(
+                    "data_1abc\n"
+                    "_em_3d_reconstruction.resolution 3.2\n"
+                    "#\n"
+                ),
+            )
+
+            metadata = read_pdb_redo_metadata(candidate)
+
+        self.assertIsNone(metadata.resolution_angstrom)
+        self.assertIsNone(metadata.resolution_source)
+
     def test_invalid_data_json_raises(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
