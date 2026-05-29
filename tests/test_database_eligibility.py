@@ -78,6 +78,51 @@ class BnetEligibilityTests(unittest.TestCase):
             ),
         )
 
+    def test_rejects_invalid_count_values(self) -> None:
+        invalid_counts = (-1, 20.5, True)
+
+        for invalid_count in invalid_counts:
+            with self.subTest(invalid_count=invalid_count):
+                context = BnetEligibilityContext(
+                    resolution_angstrom=1.5,
+                    r_free=0.2,
+                    temperature_k=100.0,
+                    asp_glu_carboxyl_oxygen_count=invalid_count,  # type: ignore[arg-type]
+                    has_asp_glu_residue_with_total_occupancy_below_one=False,
+                    uses_per_atom_b_factors=True,
+                    bnet=1.5,
+                )
+
+                result = check_bnet_reference_eligibility(context)
+
+                self.assertFalse(result.is_eligible)
+                self.assertEqual(
+                    tuple(issue.reason for issue in result.issues),
+                    (BnetEligibilityReason.INVALID_ASP_GLU_CARBOXYL_OXYGEN_COUNT,),
+                )
+
+    def test_rejects_invalid_boolean_flags(self) -> None:
+        context = BnetEligibilityContext(
+            resolution_angstrom=1.5,
+            r_free=0.2,
+            temperature_k=100.0,
+            asp_glu_carboxyl_oxygen_count=40,
+            has_asp_glu_residue_with_total_occupancy_below_one="false",  # type: ignore[arg-type]
+            uses_per_atom_b_factors=1,  # type: ignore[arg-type]
+            bnet=1.5,
+        )
+
+        result = check_bnet_reference_eligibility(context)
+
+        self.assertFalse(result.is_eligible)
+        self.assertEqual(
+            tuple(issue.reason for issue in result.issues),
+            (
+                BnetEligibilityReason.INVALID_OCCUPANCY_FLAG,
+                BnetEligibilityReason.INVALID_B_FACTOR_MODEL_FLAG,
+            ),
+        )
+
     def test_bnet_can_be_optional(self) -> None:
         context = make_eligible_context()
         context_without_bnet = BnetEligibilityContext(

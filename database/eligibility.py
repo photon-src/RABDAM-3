@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 import math
+from numbers import Integral
 from typing import SupportsFloat, SupportsIndex, cast
 
 
@@ -33,9 +34,14 @@ class BnetEligibilityReason(str, Enum):
     INVALID_TEMPERATURE = "invalid_temperature"
     TEMPERATURE_OUTSIDE_CRYO_RANGE = "temperature_outside_cryo_range"
 
+    INVALID_ASP_GLU_CARBOXYL_OXYGEN_COUNT = (
+        "invalid_asp_glu_carboxyl_oxygen_count"
+    )
     TOO_FEW_ASP_GLU_CARBOXYL_OXYGENS = "too_few_asp_glu_carboxyl_oxygens"
+    INVALID_OCCUPANCY_FLAG = "invalid_occupancy_flag"
     ASP_GLU_OCCUPANCY_LESS_THAN_ONE = "asp_glu_occupancy_less_than_one"
 
+    INVALID_B_FACTOR_MODEL_FLAG = "invalid_b_factor_model_flag"
     NOT_PER_ATOM_B_FACTOR_MODEL = "not_per_atom_b_factor_model"
 
     MISSING_BNET = "missing_bnet"
@@ -194,21 +200,49 @@ def check_bnet_reference_eligibility(
             )
         )
 
-    if context.asp_glu_carboxyl_oxygen_count < min_asp_glu_carboxyl_oxygen_count:
+    asp_glu_carboxyl_oxygen_count = context.asp_glu_carboxyl_oxygen_count
+    if (
+        isinstance(asp_glu_carboxyl_oxygen_count, bool)
+        or not isinstance(asp_glu_carboxyl_oxygen_count, Integral)
+        or asp_glu_carboxyl_oxygen_count < 0
+    ):
+        issues.append(
+            BnetEligibilityIssue(
+                BnetEligibilityReason.INVALID_ASP_GLU_CARBOXYL_OXYGEN_COUNT,
+                (
+                    "Asp/Glu side-chain carboxyl oxygen count must be a "
+                    "non-negative integer."
+                ),
+                asp_glu_carboxyl_oxygen_count,
+            )
+        )
+    elif asp_glu_carboxyl_oxygen_count < min_asp_glu_carboxyl_oxygen_count:
         issues.append(
             BnetEligibilityIssue(
                 BnetEligibilityReason.TOO_FEW_ASP_GLU_CARBOXYL_OXYGENS,
                 (
                     "Too few Asp/Glu side-chain carboxyl oxygen atoms for "
                     "Bnet reference database inclusion: "
-                    f"{context.asp_glu_carboxyl_oxygen_count} found, "
+                    f"{asp_glu_carboxyl_oxygen_count} found, "
                     f"{min_asp_glu_carboxyl_oxygen_count} required."
                 ),
-                context.asp_glu_carboxyl_oxygen_count,
+                asp_glu_carboxyl_oxygen_count,
             )
         )
 
-    if context.has_asp_glu_residue_with_total_occupancy_below_one:
+    has_low_occupancy = context.has_asp_glu_residue_with_total_occupancy_below_one
+    if not isinstance(has_low_occupancy, bool):
+        issues.append(
+            BnetEligibilityIssue(
+                BnetEligibilityReason.INVALID_OCCUPANCY_FLAG,
+                (
+                    "Asp/Glu side-chain occupancy flag must be a boolean "
+                    f"value, got {has_low_occupancy!r}."
+                ),
+                has_low_occupancy,
+            )
+        )
+    elif has_low_occupancy:
         issues.append(
             BnetEligibilityIssue(
                 BnetEligibilityReason.ASP_GLU_OCCUPANCY_LESS_THAN_ONE,
@@ -219,7 +253,19 @@ def check_bnet_reference_eligibility(
             )
         )
 
-    if not context.uses_per_atom_b_factors:
+    uses_per_atom_b_factors = context.uses_per_atom_b_factors
+    if not isinstance(uses_per_atom_b_factors, bool):
+        issues.append(
+            BnetEligibilityIssue(
+                BnetEligibilityReason.INVALID_B_FACTOR_MODEL_FLAG,
+                (
+                    "Per-atom B-factor model flag must be a boolean value, "
+                    f"got {uses_per_atom_b_factors!r}."
+                ),
+                uses_per_atom_b_factors,
+            )
+        )
+    elif not uses_per_atom_b_factors:
         issues.append(
             BnetEligibilityIssue(
                 BnetEligibilityReason.NOT_PER_ATOM_B_FACTOR_MODEL,
