@@ -66,6 +66,7 @@ class PdbRedoStructureChecks:
     atom_count: int
     non_hydrogen_atom_count: int
     protein_atom_count: int
+    model_count: int
     final_cif_path: Path
     warnings: tuple[str, ...] = field(default_factory=tuple)
 
@@ -158,6 +159,7 @@ def read_pdb_redo_structure_checks(
         atom_count=b_factor_info.atom_count,
         non_hydrogen_atom_count=b_factor_info.non_hydrogen_atom_count,
         protein_atom_count=b_factor_info.protein_atom_count,
+        model_count=len(structure),
         final_cif_path=final_cif_path,
         warnings=tuple(warnings),
     )

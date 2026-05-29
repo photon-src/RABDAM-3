@@ -127,6 +127,7 @@ class PdbRedoStructureChecksTests(unittest.TestCase):
         self.assertEqual(checks.atom_count, 24)
         self.assertEqual(checks.non_hydrogen_atom_count, 24)
         self.assertEqual(checks.protein_atom_count, 24)
+        self.assertEqual(checks.model_count, 1)
         self.assertTrue(checks.has_nonflat_protein_b_factors)
         self.assertEqual(checks.warnings, ())
 
@@ -304,6 +305,7 @@ class PdbRedoStructureChecksTests(unittest.TestCase):
         self.assertEqual(checks.atom_count, 2)
         self.assertEqual(checks.non_hydrogen_atom_count, 2)
         self.assertEqual(checks.protein_atom_count, 2)
+        self.assertEqual(checks.model_count, 2)
         self.assertEqual(checks.asp_glu_residue_count, 1)
         self.assertEqual(checks.asp_glu_carboxyl_oxygen_count, 2)
         self.assertEqual(
