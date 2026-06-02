@@ -3,11 +3,12 @@ from io import StringIO
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, sentinel
 
 from bdamage.score import BDamageAtomResult, BDamageScoreResult
 from bnet.calculate import ProteinBnetResult
 from bnet.metric import BnetResult
+from bnet.percentile import BNET_PERCENTILE_RANK_METHOD, BnetPercentileResult
 from bnet.sites import BnetSite, ProteinBnetSiteSelection
 from crystal.symmetry import (
     SymmetryExpandedAtom,
@@ -27,6 +28,7 @@ from rabdam.cli import (
     MISSING_STRUCTURE_INPUT_MESSAGE,
     RabdamCliResult,
     _build_parser,
+    calculate_default_bnet_percentile,
     main,
     parse_args,
     preparation_options_from_args,
@@ -44,7 +46,10 @@ from structure.models import (
 )
 
 
-def make_prepared_structure() -> PreparedStructure:
+def make_prepared_structure(
+    *,
+    resolution_angstrom: float | None = None,
+) -> PreparedStructure:
     atom_record = AtomRecord(
         source_atom_index=0,
         model_number=1,
@@ -82,6 +87,7 @@ def make_prepared_structure() -> PreparedStructure:
         unit_cell_alpha=90.0,
         unit_cell_beta=90.0,
         unit_cell_gamma=90.0,
+        resolution_angstrom=resolution_angstrom,
     )
     report = StructurePreparationReport(
         input_atom_count=1,
@@ -101,7 +107,32 @@ def make_prepared_structure() -> PreparedStructure:
     )
 
 
-def make_cli_result(*, translated_block=None) -> RabdamCliResult:
+def make_bnet_percentile_result() -> BnetPercentileResult:
+    return BnetPercentileResult(
+        bnet=1.234567,
+        resolution_angstrom=1.5,
+        percentile_percent=75.0,
+        percentile_fraction=0.75,
+        rank=3,
+        rank_method=BNET_PERCENTILE_RANK_METHOD,
+        reference_database_id="test_reference",
+        reference_entry_count=4,
+        nearest_resolution_count=4,
+        local_reference_count=4,
+        local_resolution_min=1.0,
+        local_resolution_max=2.0,
+        local_bnet_min=0.5,
+        local_bnet_max=2.0,
+        nearest_reference_bnet=1.1,
+    )
+
+
+def make_cli_result(
+    *,
+    translated_block=None,
+    bnet_percentile_result: BnetPercentileResult | None = None,
+    bnet_percentile_unavailable_reason: str | None = None,
+) -> RabdamCliResult:
     unit_cell = UnitCellParameters(
         a=10.0,
         b=10.0,
@@ -196,6 +227,8 @@ def make_cli_result(*, translated_block=None) -> RabdamCliResult:
         output_csv=Path("out.csv"),
         workflow_result=workflow_result,
         bnet_result=bnet_result,
+        bnet_percentile_result=bnet_percentile_result,
+        bnet_percentile_unavailable_reason=bnet_percentile_unavailable_reason,
     )
 
 
@@ -217,6 +250,8 @@ class CliArgumentTests(unittest.TestCase):
                 "3",
                 "--translation-range",
                 "2",
+                "--bnet-resolution-angstrom",
+                "1.7",
                 "--materialize-translated-block",
                 "--keep-hydrogens",
                 "--include-hetatm",
@@ -247,6 +282,7 @@ class CliArgumentTests(unittest.TestCase):
         self.assertEqual(workflow_options.window_size_fraction, 0.1)
         self.assertEqual(workflow_options.minimum_window_size, 3)
         self.assertEqual(workflow_options.translation_range, 2)
+        self.assertEqual(args.bnet_resolution_angstrom, 1.7)
         self.assertTrue(workflow_options.materialize_translated_block)
         self.assertFalse(preparation_options.remove_hydrogens)
         self.assertTrue(preparation_options.include_hetatm_in_selection)
@@ -326,6 +362,7 @@ class CliArgumentTests(unittest.TestCase):
         self.assertIn("general options:", help_text)
         self.assertIn("output and cache options:", help_text)
         self.assertIn("BDamage calculation parameters:", help_text)
+        self.assertIn("Bnet percentile options:", help_text)
         self.assertIn("selection options:", help_text)
         self.assertIn("advanced/debugging options:", help_text)
 
@@ -333,16 +370,19 @@ class CliArgumentTests(unittest.TestCase):
         general_start = help_text.index("general options:")
         output_cache_start = help_text.index("output and cache options:")
         bdamage_start = help_text.index("BDamage calculation parameters:")
+        bnet_start = help_text.index("Bnet percentile options:")
         selection_start = help_text.index("selection options:")
         advanced_start = help_text.index("advanced/debugging options:")
 
         input_help = help_text[input_start:general_start]
         general_help = help_text[general_start:output_cache_start]
         output_cache_help = help_text[output_cache_start:bdamage_start]
-        bdamage_help = help_text[bdamage_start:selection_start]
+        bdamage_help = help_text[bdamage_start:bnet_start]
+        bnet_help = help_text[bnet_start:selection_start]
         selection_help = help_text[selection_start:advanced_start]
         advanced_help = help_text[advanced_start:]
         normalized_bdamage_help = " ".join(bdamage_help.split())
+        normalized_bnet_help = " ".join(bnet_help.split())
         normalized_selection_help = " ".join(selection_help.split())
         normalized_advanced_help = " ".join(advanced_help.split())
 
@@ -362,6 +402,11 @@ class CliArgumentTests(unittest.TestCase):
         self.assertIn(
             "Number of unit-cell translations to include in each crystal direction.",
             normalized_bdamage_help,
+        )
+        self.assertIn("--bnet-resolution-angstrom FLOAT", bnet_help)
+        self.assertIn(
+            "Resolution in Angstroms for Bnet percentile calculation.",
+            normalized_bnet_help,
         )
         self.assertIn("--keep-hydrogens", selection_help)
         self.assertIn(
@@ -463,6 +508,61 @@ class CliProgressTests(unittest.TestCase):
         )
 
 
+class BnetPercentileCliTests(unittest.TestCase):
+    def test_default_bnet_percentile_skips_when_database_is_missing(self) -> None:
+        with patch("rabdam.cli.load_default_bnet_reference_database", return_value=None):
+            result, reason = calculate_default_bnet_percentile(
+                bnet_result=make_cli_result().bnet_result,
+                resolution_angstrom=1.5,
+            )
+
+        self.assertIsNone(result)
+        self.assertIn("default reference database not found", reason or "")
+
+    def test_default_bnet_percentile_skips_when_resolution_is_missing(self) -> None:
+        with (
+            patch(
+                "rabdam.cli.load_default_bnet_reference_database",
+                return_value=sentinel.reference_database,
+            ),
+            patch("rabdam.cli.calculate_bnet_percentile") as percentile_mock,
+        ):
+            result, reason = calculate_default_bnet_percentile(
+                bnet_result=make_cli_result().bnet_result,
+                resolution_angstrom=None,
+            )
+
+        self.assertIsNone(result)
+        self.assertIn("structure resolution is unavailable", reason or "")
+        percentile_mock.assert_not_called()
+
+    def test_default_bnet_percentile_uses_loaded_database_and_resolution(self) -> None:
+        percentile_result = make_bnet_percentile_result()
+
+        with (
+            patch(
+                "rabdam.cli.load_default_bnet_reference_database",
+                return_value=sentinel.reference_database,
+            ),
+            patch(
+                "rabdam.cli.calculate_bnet_percentile",
+                return_value=percentile_result,
+            ) as percentile_mock,
+        ):
+            result, reason = calculate_default_bnet_percentile(
+                bnet_result=make_cli_result().bnet_result,
+                resolution_angstrom=1.5,
+            )
+
+        self.assertEqual(result, percentile_result)
+        self.assertIsNone(reason)
+        percentile_mock.assert_called_once_with(
+            bnet=1.234567,
+            resolution_angstrom=1.5,
+            reference_database=sentinel.reference_database,
+        )
+
+
 class CliSummaryTests(unittest.TestCase):
     def test_default_summary_is_grouped_without_preview_or_debug(self) -> None:
         stdout = StringIO()
@@ -494,6 +594,7 @@ class CliSummaryTests(unittest.TestCase):
             "Bnet summary:\n"
             "  Protein Bnet sites: 1\n"
             "  Raw protein Bnet: 1.2346\n"
+            "  Bnet percentile: unavailable (not calculated)\n"
             "\n"
             "Total runtime: 2.3s\n",
         )
@@ -530,12 +631,51 @@ class CliSummaryTests(unittest.TestCase):
             "Bnet summary:\n"
             "  Protein Bnet sites: 1\n"
             "  Raw protein Bnet: 1.2346\n"
+            "  Bnet percentile: unavailable (not calculated)\n"
             "\n"
             "Preview:\n"
             "  Packing-density counts, first 2:\n"
             "    7, 8\n"
             "  BDamage scores, first 2:\n"
             "    1.235, 0.988\n"
+            "\n"
+            "Total runtime: 2.3s\n",
+        )
+
+    def test_summary_prints_bnet_percentile_when_available(self) -> None:
+        stdout = StringIO()
+
+        print_summary(
+            make_cli_result(bnet_percentile_result=make_bnet_percentile_result()),
+            preview_count=0,
+            total_runtime_seconds=2.34,
+            stream=stdout,
+        )
+
+        self.assertEqual(
+            stdout.getvalue(),
+            "\n"
+            "Done.\n"
+            "\n"
+            "Input: example.cif\n"
+            "Output CSV: out.csv\n"
+            "\n"
+            "Crystallographic expansion:\n"
+            "  Symmetry-expanded atoms: 3\n"
+            "  Translated atoms before trimming: 27\n"
+            "  Neighbour-block atoms after trimming: 2\n"
+            "\n"
+            "BDamage summary:\n"
+            "  Selected atoms: 1\n"
+            "  Window size: 1\n"
+            "\n"
+            "Bnet summary:\n"
+            "  Protein Bnet sites: 1\n"
+            "  Raw protein Bnet: 1.2346\n"
+            "  Bnet percentile: 75.00%\n"
+            "  Bnet reference: test_reference (4 entries)\n"
+            "  Resolution used: 1.5 A\n"
+            "  Local reference set: 4 entries, 1-2 A\n"
             "\n"
             "Total runtime: 2.3s\n",
         )
@@ -570,6 +710,7 @@ class CliSummaryTests(unittest.TestCase):
             "Bnet summary:\n"
             "  Protein Bnet sites: 1\n"
             "  Raw protein Bnet: 1.2346\n"
+            "  Bnet percentile: unavailable (not calculated)\n"
             "\n"
             "Debug:\n"
             "  Translated block materialized: True\n"
@@ -578,7 +719,7 @@ class CliSummaryTests(unittest.TestCase):
         )
 
     def test_run_from_args_includes_total_runtime_in_stdout_summary(self) -> None:
-        args = parse_args(["example.cif"])
+        args = parse_args(["example.cif", "--bnet-resolution-angstrom", "1.7"])
         stdout = StringIO()
         stderr = StringIO()
         cli_result = make_cli_result()
@@ -609,6 +750,16 @@ class CliSummaryTests(unittest.TestCase):
                     stage_calls.append("bnet") or cli_result.bnet_result
                 ),
             ),
+            patch(
+                "rabdam.cli.calculate_default_bnet_percentile",
+                side_effect=lambda **_: (
+                    stage_calls.append("percentile")
+                    or (
+                        None,
+                        "default reference database not found: database/reference/database.csv",
+                    )
+                ),
+            ) as percentile_mock,
             patch("rabdam.cli.perf_counter", return_value=3.34),
         ):
             run_from_args(
@@ -620,7 +771,12 @@ class CliSummaryTests(unittest.TestCase):
 
         self.assertIn("Total runtime: 2.3s\n", stdout.getvalue())
         self.assertIn("Raw protein Bnet: 1.2346\n", stdout.getvalue())
-        self.assertEqual(stage_calls, ["bdamage", "csv", "bnet"])
+        self.assertIn("Bnet percentile: unavailable", stdout.getvalue())
+        self.assertEqual(stage_calls, ["bdamage", "csv", "bnet", "percentile"])
+        self.assertEqual(
+            percentile_mock.call_args.kwargs["resolution_angstrom"],
+            1.7,
+        )
         self.assertEqual(stderr.getvalue(), "")
 
 

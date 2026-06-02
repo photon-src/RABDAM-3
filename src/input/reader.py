@@ -8,7 +8,9 @@ It converts the file into RABDAM-owned data objects.
 """
 
 from dataclasses import dataclass
+import math
 from pathlib import Path
+import re
 
 import gemmi
 
@@ -17,6 +19,17 @@ from input.resolver import (
     ResolvedStructureInput,
     StructureFileFormat,
 )
+
+
+_RESOLUTION_CIF_TAGS = (
+    "_refine.ls_d_res_high",
+    "_reflns.d_resolution_high",
+)
+_PDB_RESOLUTION_RE = re.compile(
+    r"^REMARK\s+2\s+RESOLUTION\.\s+([0-9]+(?:\.[0-9]*)?)",
+    re.IGNORECASE,
+)
+_MISSING_METADATA_VALUES = frozenset({"", ".", "?", "null", "none", "nan", "na", "n/a"})
 
 
 class StructureReadError(InputResolutionError):
@@ -65,6 +78,7 @@ class StructureMetadata:
     unit_cell_alpha: float | None
     unit_cell_beta: float | None
     unit_cell_gamma: float | None
+    resolution_angstrom: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,6 +206,11 @@ def _extract_metadata(
         unit_cell_alpha=_none_if_zero(cell.alpha),
         unit_cell_beta=_none_if_zero(cell.beta),
         unit_cell_gamma=_none_if_zero(cell.gamma),
+        resolution_angstrom=_extract_resolution_angstrom(
+            structure=structure,
+            path=path,
+            file_format=resolved_input.file_format,
+        ),
     )
 
 
@@ -204,6 +223,92 @@ def _get_space_group_name(structure: gemmi.Structure) -> str | None:
         return str(space_group)
 
     return None
+
+
+def _extract_resolution_angstrom(
+    *,
+    structure: gemmi.Structure,
+    path: Path,
+    file_format: StructureFileFormat,
+) -> float | None:
+    """Extract crystallographic resolution from Gemmi or file metadata."""
+
+    resolution = _get_structure_resolution_angstrom(structure)
+    if resolution is not None:
+        return resolution
+
+    if file_format is StructureFileFormat.MMCIF:
+        return _extract_mmcif_resolution_angstrom(path)
+
+    if file_format is StructureFileFormat.PDB:
+        return _extract_pdb_resolution_angstrom(path)
+
+    return None
+
+
+def _get_structure_resolution_angstrom(structure: gemmi.Structure) -> float | None:
+    """Return the crystallographic resolution if Gemmi found one."""
+
+    resolution = getattr(structure, "resolution", None)
+    return _finite_positive_float_or_none(resolution)
+
+
+def _extract_mmcif_resolution_angstrom(path: Path) -> float | None:
+    """Return resolution from common mmCIF scalar tags when available."""
+
+    try:
+        document = gemmi.cif.read_file(str(path))
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+    if len(document) == 0:
+        return None
+
+    block = document[0]
+    for tag in _RESOLUTION_CIF_TAGS:
+        resolution = _finite_positive_float_or_none(block.find_value(tag))
+        if resolution is not None:
+            return resolution
+
+    return None
+
+
+def _extract_pdb_resolution_angstrom(path: Path) -> float | None:
+    """Return resolution from a PDB REMARK 2 record when available."""
+
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                match = _PDB_RESOLUTION_RE.match(line)
+                if match is None:
+                    continue
+
+                return _finite_positive_float_or_none(match.group(1))
+    except OSError:
+        return None
+
+    return None
+
+
+def _finite_positive_float_or_none(value: object) -> float | None:
+    """Return a finite positive float, or None for missing/invalid values."""
+
+    if value is None:
+        return None
+
+    text = str(value).strip().strip("'\"")
+    if text.casefold() in _MISSING_METADATA_VALUES:
+        return None
+
+    try:
+        number = float(text)
+    except ValueError:
+        return None
+
+    if not math.isfinite(number) or number <= 0.0:
+        return None
+
+    return number
 
 
 def _get_residue_number(residue: gemmi.Residue) -> int | None:

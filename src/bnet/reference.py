@@ -31,6 +31,13 @@ from numpy.typing import NDArray
 
 DEFAULT_REFERENCE_SCHEMA_VERSION = "1.0"
 DEFAULT_REFERENCE_METRIC_KIND = "protein_cryo_asp_glu_bnet"
+DEFAULT_REFERENCE_DATABASE_FILENAME = "database.csv"
+DEFAULT_REFERENCE_DATABASE_DIR = (
+    Path(__file__).resolve().parents[2] / "database" / "reference"
+)
+DEFAULT_REFERENCE_DATABASE_CSV_PATH = (
+    DEFAULT_REFERENCE_DATABASE_DIR / DEFAULT_REFERENCE_DATABASE_FILENAME
+)
 
 _PDB_ID_COLUMN_ALIASES = frozenset(
     {
@@ -257,6 +264,30 @@ def load_bnet_reference_database(
     )
 
     return BnetReferenceDatabase(entries=entries, metadata=metadata)
+
+
+def default_bnet_reference_database_path(
+    reference_dir: str | Path = DEFAULT_REFERENCE_DATABASE_DIR,
+) -> Path:
+    """Return the active default Bnet reference CSV path."""
+
+    return Path(reference_dir).expanduser() / DEFAULT_REFERENCE_DATABASE_FILENAME
+
+
+def load_default_bnet_reference_database(
+    reference_dir: str | Path = DEFAULT_REFERENCE_DATABASE_DIR,
+) -> BnetReferenceDatabase | None:
+    """Load the default Bnet reference database when it exists.
+
+    Only ``database.csv`` is considered active. Other CSV files in the same
+    directory are ignored so alternate databases can be stored there safely.
+    """
+
+    csv_path = default_bnet_reference_database_path(reference_dir)
+    if not csv_path.is_file():
+        return None
+
+    return load_bnet_reference_database(csv_path)
 
 
 def write_bnet_reference_database(
@@ -507,8 +538,13 @@ __all__ = [
     "BnetReferenceEntry",
     "BnetReferenceError",
     "BnetReferenceMetadata",
+    "DEFAULT_REFERENCE_DATABASE_CSV_PATH",
+    "DEFAULT_REFERENCE_DATABASE_DIR",
+    "DEFAULT_REFERENCE_DATABASE_FILENAME",
     "DEFAULT_REFERENCE_METRIC_KIND",
     "DEFAULT_REFERENCE_SCHEMA_VERSION",
+    "default_bnet_reference_database_path",
+    "load_default_bnet_reference_database",
     "load_bnet_reference_database",
     "write_bnet_reference_database",
 ]

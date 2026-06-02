@@ -21,6 +21,11 @@ from bnet.calculate import (
     ProteinBnetResult,
     calculate_protein_bnet,
 )
+from bnet.percentile import BnetPercentileResult, calculate_bnet_percentile
+from bnet.reference import (
+    DEFAULT_REFERENCE_DATABASE_CSV_PATH,
+    load_default_bnet_reference_database,
+)
 from rabdam import __version__
 from rabdam.workflow import (
     BDamageWorkflowError,
@@ -112,6 +117,8 @@ class RabdamCliResult:
     output_csv: Path
     workflow_result: BDamageWorkflowResult
     bnet_result: ProteinBnetResult
+    bnet_percentile_result: BnetPercentileResult | None = None
+    bnet_percentile_unavailable_reason: str | None = None
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -128,6 +135,7 @@ def _build_parser() -> argparse.ArgumentParser:
     general = parser.add_argument_group("general options")
     output_cache = parser.add_argument_group("output and cache options")
     bdamage = parser.add_argument_group("BDamage calculation parameters")
+    bnet = parser.add_argument_group("Bnet percentile options")
     selection = parser.add_argument_group("selection options")
     advanced = parser.add_argument_group("advanced/debugging options")
 
@@ -214,6 +222,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Number of unit-cell translations to include in each crystal direction. "
             f"Default: {defaults.translation_range}"
+        ),
+    )
+    bnet.add_argument(
+        "--bnet-resolution-angstrom",
+        metavar="FLOAT",
+        type=positive_float,
+        default=None,
+        help=(
+            "Resolution in Angstroms for Bnet percentile calculation. "
+            "Overrides resolution read from the structure file."
         ),
     )
     selection.add_argument(
@@ -441,11 +459,26 @@ def run_from_args(
         quiet=args.quiet,
     )
 
+    bnet_percentile_result, bnet_percentile_unavailable_reason = run_stage(
+        "Calculating Bnet percentile",
+        lambda: calculate_default_bnet_percentile(
+            bnet_result=bnet_result,
+            resolution_angstrom=(
+                args.bnet_resolution_angstrom
+                or workflow_result.prepared_structure.metadata.resolution_angstrom
+            ),
+        ),
+        stream=stderr,
+        quiet=args.quiet,
+    )
+
     cli_result = RabdamCliResult(
         local_input=local_input,
         output_csv=output_csv,
         workflow_result=workflow_result,
         bnet_result=bnet_result,
+        bnet_percentile_result=bnet_percentile_result,
+        bnet_percentile_unavailable_reason=bnet_percentile_unavailable_reason,
     )
 
     if not args.quiet:
@@ -458,6 +491,36 @@ def run_from_args(
         )
 
     return cli_result
+
+
+def calculate_default_bnet_percentile(
+    *,
+    bnet_result: ProteinBnetResult,
+    resolution_angstrom: float | None,
+) -> tuple[BnetPercentileResult | None, str | None]:
+    """Calculate Bnet percentile with the default swappable reference database."""
+
+    reference_database = load_default_bnet_reference_database()
+    if reference_database is None:
+        return (
+            None,
+            f"default reference database not found: {DEFAULT_REFERENCE_DATABASE_CSV_PATH}",
+        )
+
+    if resolution_angstrom is None:
+        return (
+            None,
+            "structure resolution is unavailable; use --bnet-resolution-angstrom",
+        )
+
+    return (
+        calculate_bnet_percentile(
+            bnet=bnet_result.bnet,
+            resolution_angstrom=resolution_angstrom,
+            reference_database=reference_database,
+        ),
+        None,
+    )
 
 
 def run_stage(
@@ -585,6 +648,7 @@ def print_summary(
     print("Bnet summary:", file=stream)
     print(f"  Protein Bnet sites: {result.bnet_result.site_count}", file=stream)
     print(f"  Raw protein Bnet: {result.bnet_result.bnet:.4f}", file=stream)
+    print_bnet_percentile_summary(result, stream=stream)
 
     if preview_count > 0:
         packing_density_counts = packing_density_counts_as_tuple(
@@ -613,6 +677,41 @@ def _format_int_values(values: Sequence[int]) -> str:
     """Return integer preview values as a comma-separated string."""
 
     return ", ".join(str(value) for value in values)
+
+
+def print_bnet_percentile_summary(
+    result: RabdamCliResult,
+    *,
+    stream: TextIO,
+) -> None:
+    """Print Bnet percentile summary lines."""
+
+    percentile_result = result.bnet_percentile_result
+    if percentile_result is None:
+        reason = result.bnet_percentile_unavailable_reason or "not calculated"
+        print(f"  Bnet percentile: unavailable ({reason})", file=stream)
+        return
+
+    print(
+        f"  Bnet percentile: {percentile_result.percentile_percent:.2f}%",
+        file=stream,
+    )
+    print(
+        f"  Bnet reference: {percentile_result.reference_database_id} "
+        f"({percentile_result.reference_entry_count} entries)",
+        file=stream,
+    )
+    print(
+        f"  Resolution used: {percentile_result.resolution_angstrom:.3g} A",
+        file=stream,
+    )
+    print(
+        "  Local reference set: "
+        f"{percentile_result.local_reference_count} entries, "
+        f"{percentile_result.local_resolution_min:.3g}-"
+        f"{percentile_result.local_resolution_max:.3g} A",
+        file=stream,
+    )
 
 
 def _format_float_values(values: Sequence[float]) -> str:

@@ -10,6 +10,9 @@ from bnet.reference import (
     BnetReferenceEntry,
     BnetReferenceError,
     BnetReferenceMetadata,
+    DEFAULT_REFERENCE_DATABASE_FILENAME,
+    default_bnet_reference_database_path,
+    load_default_bnet_reference_database,
     load_bnet_reference_database,
     write_bnet_reference_database,
 )
@@ -67,6 +70,47 @@ class BnetReferenceTests(unittest.TestCase):
         self.assertEqual(database.metadata.database_id, "standard_reference")
         self.assertEqual(database.entries[0], BnetReferenceEntry("1ABC", 1.5, 1.2))
 
+    def test_loads_only_default_reference_database_csv_from_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            reference_dir = Path(temp_dir)
+            default_path = reference_dir / DEFAULT_REFERENCE_DATABASE_FILENAME
+            default_path.write_text(
+                "pdb_id,resolution_angstrom,bnet\n"
+                "1ABC,1.5,1.2\n",
+                encoding="utf-8",
+            )
+            (reference_dir / "other.csv").write_text(
+                "this,is,not,a,reference\n",
+                encoding="utf-8",
+            )
+
+            database = load_default_bnet_reference_database(reference_dir)
+
+        self.assertEqual(
+            default_bnet_reference_database_path(reference_dir),
+            default_path,
+        )
+        assert database is not None
+        self.assertEqual(database.pdb_ids, ("1ABC",))
+        self.assertEqual(database.metadata.database_id, "database")
+
+    def test_missing_default_reference_database_returns_none(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database = load_default_bnet_reference_database(temp_dir)
+
+        self.assertIsNone(database)
+
+    def test_invalid_default_reference_database_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            reference_dir = Path(temp_dir)
+            (reference_dir / DEFAULT_REFERENCE_DATABASE_FILENAME).write_text(
+                "not,a,bnet,reference\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(BnetReferenceError):
+                load_default_bnet_reference_database(reference_dir)
+
     def test_load_reference_csv_rejects_ambiguous_columns(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             csv_path = Path(temp_dir) / "ambiguous.csv"
@@ -110,7 +154,7 @@ class BnetReferenceTests(unittest.TestCase):
         invalid_entries = (
             lambda: BnetReferenceEntry("", 1.5, 1.2),
             lambda: BnetReferenceEntry("1ABC", True, 1.2),
-            lambda: BnetReferenceEntry("1ABC", object(), 1.2),
+            lambda: BnetReferenceEntry("1ABC", object(), 1.2),  # type: ignore[arg-type]
             lambda: BnetReferenceEntry("1ABC", 0.0, 1.2),
             lambda: BnetReferenceEntry("1ABC", 1.5, -1.0),
             lambda: BnetReferenceDatabase(entries=()),
