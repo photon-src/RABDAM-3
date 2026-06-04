@@ -24,6 +24,7 @@ from pathlib import Path
 import sys
 from time import monotonic
 import traceback
+from typing import TextIO
 
 from .discover import (
     PdbRedoCandidate,
@@ -50,6 +51,7 @@ from .process import (
 
 
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "output"
+DEFAULT_OUTPUT_DIR_HELP = Path("database") / "output"
 DEFAULT_DATABASE_CSV_PATH = DEFAULT_OUTPUT_DIR / "database.csv"
 DEFAULT_FINAL_REFERENCE_CSV_PATH = DEFAULT_DATABASE_CSV_PATH
 DEFAULT_ACCEPTED_CSV_PATH = DEFAULT_OUTPUT_DIR / "database.accepted.csv"
@@ -59,6 +61,15 @@ DEFAULT_ALL_SCORES_CSV_PATH = DEFAULT_OUTPUT_DIR / "database.all_scores.csv"
 DEFAULT_TEMPERATURE_CACHE_CSV_PATH = DEFAULT_OUTPUT_DIR / "rcsb_temperature_cache.csv"
 DEFAULT_REFERENCE_DATABASE_ID_PREFIX = "pdb_redo_partial_strict_cryo_bnet"
 STRICT_CRYO_ELIGIBILITY_POLICY_ID = "rabdam2_strict_cryo_v1"
+MISSING_PDB_REDO_ROOT_MESSAGE = """build_bnet_database: error: missing required argument: PDB_REDO_ROOT
+
+Usage:
+  build_bnet_database PDB_REDO_ROOT [options]
+
+Default usage:
+  build_bnet_database downloads/PDB-REDO
+
+Run 'build_bnet_database --help' for all options."""
 
 
 def default_worker_count(cpu_count: int | None = None) -> int:
@@ -112,7 +123,7 @@ class BnetDatabaseBuildOptions:
     require_protein: bool = True
     reject_nucleic_acid: bool = False
     attempt_bnet_for_reference_ineligible: bool = False
-    fetch_rcsb_temperature: bool = False
+    fetch_rcsb_temperature: bool = True
 
     include_traceback: bool = False
 
@@ -782,145 +793,45 @@ def _print_build_summary(
         print(f"  Rate: {rate:.3f} entries/s")
 
 
-def parse_args(argv: list[str] | None = None) -> BnetDatabaseBuildOptions:
-    """Parse command-line arguments into build options."""
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the database-builder command-line parser."""
 
     default_jobs = default_worker_count()
-
     parser = argparse.ArgumentParser(
+        prog="build_bnet_database",
+        usage="%(prog)s PDB_REDO_ROOT [options]",
         description="Build a Bnet reference database from a local PDB-REDO mirror.",
+        add_help=False,
     )
 
-    parser.add_argument(
+    input_group = parser.add_argument_group("input")
+    general = parser.add_argument_group("general options")
+    output = parser.add_argument_group("output options")
+    performance = parser.add_argument_group("build performance options")
+    metadata = parser.add_argument_group("metadata recovery options")
+    eligibility = parser.add_argument_group("reference eligibility options")
+    advanced = parser.add_argument_group("advanced/debugging options")
+
+    input_group.add_argument(
         "pdb_redo_root",
+        nargs="?",
         type=Path,
+        metavar="PDB_REDO_ROOT",
         help="Root directory of the local PDB-REDO mirror.",
     )
-    parser.add_argument(
-        "--accepted-csv",
-        type=Path,
-        default=DEFAULT_ACCEPTED_CSV_PATH,
-        help=(
-            "Output accepted Bnet database CSV. "
-            f"Default: {DEFAULT_ACCEPTED_CSV_PATH}"
-        ),
+    general.add_argument(
+        "-h",
+        "--help",
+        action="help",
+        default=argparse.SUPPRESS,
+        help="Show this help message and exit.",
     )
-    parser.add_argument(
-        "--accepted-details-csv",
-        type=Path,
-        default=None,
-        help=(
-            "Optional detailed accepted-row CSV. Disabled by default. "
-            f"Suggested path: {DEFAULT_ACCEPTED_DETAILS_CSV_PATH}"
-        ),
-    )
-    parser.add_argument(
-        "--rejected-csv",
-        type=Path,
-        default=DEFAULT_REJECTED_CSV_PATH,
-        help=f"Rejected-row CSV. Default: {DEFAULT_REJECTED_CSV_PATH}",
-    )
-    parser.add_argument(
-        "--all-scores-csv",
-        type=Path,
-        default=None,
-        help=(
-            "Optional broad diagnostics CSV for every processed candidate. "
-            f"Disabled by default. Suggested path: {DEFAULT_ALL_SCORES_CSV_PATH}"
-        ),
-    )
-    parser.add_argument(
-        "--final-reference-csv",
-        type=Path,
-        default=DEFAULT_FINAL_REFERENCE_CSV_PATH,
-        help=(
-            "Final sorted 4-column reference CSV. "
-            f"Default: {DEFAULT_FINAL_REFERENCE_CSV_PATH}"
-        ),
-    )
-    parser.add_argument(
-        "--manifest",
-        type=Path,
-        default=None,
-        help="Optional manifest path. Defaults to <final-reference>.manifest.json.",
-    )
-    parser.add_argument(
-        "--temperature-cache-csv",
-        type=Path,
-        default=DEFAULT_TEMPERATURE_CACHE_CSV_PATH,
-        help=(
-            "Compact RCSB collection-temperature cache CSV. "
-            f"Default: {DEFAULT_TEMPERATURE_CACHE_CSV_PATH}"
-        ),
-    )
-    parser.add_argument(
-        "--database-id",
-        default=None,
-        help="Database identifier written to the final manifest.",
-    )
-    parser.add_argument(
-        "--no-accepted-details-csv",
-        action="store_true",
-        help="Disable accepted-details CSV output.",
-    )
-    parser.add_argument(
-        "--no-rejected-csv",
-        action="store_true",
-        help="Disable rejected-row CSV output.",
-    )
-    parser.add_argument(
-        "--no-all-scores-csv",
-        action="store_true",
-        help="Disable broad all-scores diagnostics CSV output.",
-    )
-    parser.add_argument(
-        "--no-final-reference-csv",
-        action="store_true",
-        help="Do not write the final sorted reference CSV or manifest.",
-    )
-    parser.add_argument(
-        "--no-temperature-cache-csv",
-        action="store_true",
-        help="Disable compact temperature cache output.",
-    )
-
-    parser.add_argument(
-        "--jobs",
-        type=int,
-        default=default_jobs,
-        help=(
-            "Number of worker processes. Default: "
-            f"about 90%% of CPU cores; currently {default_jobs}."
-        ),
-    )
-    parser.add_argument(
-        "--max-tasks-in-flight",
-        type=int,
-        default=None,
-        help=(
-            "Maximum submitted but unfinished worker tasks. "
-            "Default: 2 * jobs."
-        ),
-    )
-    parser.add_argument(
-        "--max-candidates",
-        type=int,
-        default=None,
-        help="Process at most this many unprocessed candidates.",
-    )
-    parser.add_argument(
-        "--progress-every",
-        type=int,
-        default=100,
-        help="Print progress every N completed candidates. Use 0 to disable.",
-    )
-
-    parser.add_argument(
+    general.add_argument(
         "--overwrite",
         action="store_true",
         help="Overwrite existing output CSVs.",
     )
-    parser.add_argument(
+    general.add_argument(
         "--no-resume",
         action="store_true",
         help=(
@@ -928,33 +839,148 @@ def parse_args(argv: list[str] | None = None) -> BnetDatabaseBuildOptions:
             "rejected, or all-scores CSV outputs."
         ),
     )
-    parser.add_argument(
-        "--no-recursive-discovery",
-        action="store_true",
-        help="Only inspect immediate child directories of the PDB-REDO root.",
+    general.add_argument(
+        "--progress-every",
+        metavar="INT",
+        type=_non_negative_int,
+        default=100,
+        help="Print progress every N completed candidates. Use 0 to disable.",
     )
-    parser.add_argument(
+    output.add_argument(
+        "-o",
+        "--output-dir",
+        metavar="DIR",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR,
+        help=(
+            "Directory for standard builder outputs. "
+            f"Default: {DEFAULT_OUTPUT_DIR_HELP}"
+        ),
+    )
+    output.add_argument(
+        "--accepted-csv",
+        metavar="PATH",
+        type=Path,
+        default=None,
+        help=(
+            "Output accepted Bnet database CSV. "
+            f"Default: <output-dir>/{DEFAULT_ACCEPTED_CSV_PATH.name}"
+        ),
+    )
+    output.add_argument(
+        "--rejected-csv",
+        metavar="PATH",
+        type=Path,
+        default=None,
+        help=(
+            "Rejected-row CSV. "
+            f"Default: <output-dir>/{DEFAULT_REJECTED_CSV_PATH.name}"
+        ),
+    )
+    output.add_argument(
+        "--final-reference-csv",
+        metavar="PATH",
+        type=Path,
+        default=None,
+        help=(
+            "Final sorted 4-column reference CSV. "
+            f"Default: <output-dir>/{DEFAULT_FINAL_REFERENCE_CSV_PATH.name}"
+        ),
+    )
+    output.add_argument(
+        "--manifest",
+        metavar="PATH",
+        type=Path,
+        default=None,
+        help="Optional manifest path. Defaults to <final-reference>.manifest.json.",
+    )
+    output.add_argument(
+        "--temperature-cache-csv",
+        metavar="PATH",
+        type=Path,
+        default=None,
+        help=(
+            "Compact RCSB collection-temperature cache CSV. "
+            f"Default: <output-dir>/{DEFAULT_TEMPERATURE_CACHE_CSV_PATH.name}"
+        ),
+    )
+    output.add_argument(
+        "--diagnostics",
+        action="store_true",
+        help=(
+            "Write optional accepted-details and all-scores CSVs in the output "
+            "directory."
+        ),
+    )
+    performance.add_argument(
+        "--jobs",
+        metavar="INT",
+        type=_positive_int,
+        default=default_jobs,
+        help=(
+            "Number of worker processes. Default: "
+            f"about 90%% of CPU cores; currently {default_jobs}."
+        ),
+    )
+    performance.add_argument(
+        "--max-tasks-in-flight",
+        metavar="INT",
+        type=_positive_int,
+        default=None,
+        help=(
+            "Maximum submitted but unfinished worker tasks. "
+            "Default: 2 * jobs."
+        ),
+    )
+    performance.add_argument(
+        "--max-candidates",
+        metavar="INT",
+        type=_non_negative_int,
+        default=None,
+        help="Process at most this many unprocessed candidates.",
+    )
+    temperature_fetch = metadata.add_mutually_exclusive_group()
+    temperature_fetch.add_argument(
+        "--fetch-rcsb-temperatures",
+        dest="fetch_rcsb_temperatures",
+        action="store_true",
+        default=True,
+        help=(
+            "Download canonical RCSB mmCIF metadata only when local/cache "
+            "temperature cannot verify strict cryo eligibility. This is the "
+            "default."
+        ),
+    )
+    temperature_fetch.add_argument(
+        "--no-fetch-rcsb-temperatures",
+        dest="fetch_rcsb_temperatures",
+        action="store_false",
+        help=(
+            "Do not download canonical RCSB mmCIF metadata; use local files "
+            "and the compact temperature cache only."
+        ),
+    )
+    metadata.add_argument(
         "--allow-missing-data-json",
         action="store_true",
         help="Discover candidates even when data.json is missing.",
     )
-
-    parser.add_argument(
+    eligibility.add_argument(
         "--allow-non-xray",
         action="store_true",
         help="Do not reject entries that are not marked as X-ray crystallography.",
     )
-    parser.add_argument(
+    eligibility.add_argument(
         "--allow-multiple-models",
         action="store_true",
         help="Do not reject entries containing multiple models.",
     )
-    parser.add_argument(
+    eligibility.add_argument(
         "--allow-no-protein",
         action="store_true",
         help="Do not reject entries without a protein polymer.",
     )
-    parser.add_argument(
+    eligibility.add_argument(
         "--allow-nucleic-acid",
         action="store_true",
         help=(
@@ -962,12 +988,67 @@ def parse_args(argv: list[str] | None = None) -> BnetDatabaseBuildOptions:
             "already the default for RABDAM2-compatible protein Bnet builds."
         ),
     )
-    parser.add_argument(
+    eligibility.add_argument(
         "--reject-nucleic-acid",
         action="store_true",
         help="Reject entries containing nucleic-acid polymers.",
     )
-    parser.add_argument(
+    advanced.add_argument(
+        "--accepted-details-csv",
+        metavar="PATH",
+        type=Path,
+        default=None,
+        help=(
+            "Optional detailed accepted-row CSV. Disabled by default unless "
+            "--diagnostics is set."
+        ),
+    )
+    advanced.add_argument(
+        "--all-scores-csv",
+        metavar="PATH",
+        type=Path,
+        default=None,
+        help=(
+            "Optional broad diagnostics CSV for every processed candidate. "
+            "Disabled by default unless --diagnostics is set."
+        ),
+    )
+    advanced.add_argument(
+        "--database-id",
+        default=None,
+        help="Database identifier written to the final manifest.",
+    )
+    advanced.add_argument(
+        "--no-accepted-details-csv",
+        action="store_true",
+        help="Disable accepted-details CSV output.",
+    )
+    advanced.add_argument(
+        "--no-rejected-csv",
+        action="store_true",
+        help="Disable rejected-row CSV output.",
+    )
+    advanced.add_argument(
+        "--no-all-scores-csv",
+        action="store_true",
+        help="Disable broad all-scores diagnostics CSV output.",
+    )
+    advanced.add_argument(
+        "--no-final-reference-csv",
+        action="store_true",
+        help="Do not write the final sorted reference CSV or manifest.",
+    )
+    advanced.add_argument(
+        "--no-temperature-cache-csv",
+        action="store_true",
+        help="Disable compact temperature cache output.",
+    )
+    advanced.add_argument(
+        "--no-recursive-discovery",
+        action="store_true",
+        help="Only inspect immediate child directories of the PDB-REDO root.",
+    )
+    advanced.add_argument(
         "--reference-only-prefilter",
         action="store_true",
         help=(
@@ -975,7 +1056,7 @@ def parse_args(argv: list[str] | None = None) -> BnetDatabaseBuildOptions:
             "eligibility checks. This is the default."
         ),
     )
-    parser.add_argument(
+    advanced.add_argument(
         "--calculate-reference-ineligible-bnet",
         action="store_true",
         help=(
@@ -983,39 +1064,81 @@ def parse_args(argv: list[str] | None = None) -> BnetDatabaseBuildOptions:
             "eligibility checks. This is slower and intended for diagnostics."
         ),
     )
-    parser.add_argument(
-        "--fetch-rcsb-temperatures",
-        action="store_true",
-        help=(
-            "Download canonical RCSB mmCIF metadata only when local/cache "
-            "temperature cannot verify strict cryo eligibility."
-        ),
-    )
-    parser.add_argument(
+    advanced.add_argument(
         "--include-traceback",
         action="store_true",
         help="Include traceback text in rejected CSV rows for exceptions.",
     )
 
-    args = parser.parse_args(argv)
+    return parser
+
+
+def parse_args(argv: list[str] | None = None) -> BnetDatabaseBuildOptions:
+    """Parse command-line arguments into build options."""
+
+    args = _parse_cli_args(argv)
+    if args.pdb_redo_root is None:
+        print_missing_pdb_redo_root_error(stream=sys.stderr)
+        raise SystemExit(2)
+
+    return _options_from_args(args)
+
+
+def _parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse raw command-line arguments."""
+
+    parser = _build_parser()
+    return parser.parse_args(argv)
+
+
+def _options_from_args(args: argparse.Namespace) -> BnetDatabaseBuildOptions:
+    """Build database-build options from parsed command-line arguments."""
+
+    if args.pdb_redo_root is None:
+        raise ValueError("pdb_redo_root is required.")
+
+    output_dir = args.output_dir
+
+    accepted_csv_path = args.accepted_csv or _output_path(
+        output_dir,
+        DEFAULT_ACCEPTED_CSV_PATH,
+    )
+    rejected_csv_path = None if args.no_rejected_csv else (
+        args.rejected_csv
+        or _output_path(output_dir, DEFAULT_REJECTED_CSV_PATH)
+    )
+    final_reference_csv_path = None if args.no_final_reference_csv else (
+        args.final_reference_csv
+        or _output_path(output_dir, DEFAULT_FINAL_REFERENCE_CSV_PATH)
+    )
+    temperature_cache_csv_path = None if args.no_temperature_cache_csv else (
+        args.temperature_cache_csv
+        or _output_path(output_dir, DEFAULT_TEMPERATURE_CACHE_CSV_PATH)
+    )
+    accepted_details_csv_path = _optional_diagnostic_path(
+        explicit_path=args.accepted_details_csv,
+        disabled=args.no_accepted_details_csv,
+        enabled_by_diagnostics=args.diagnostics,
+        output_dir=output_dir,
+        default_path=DEFAULT_ACCEPTED_DETAILS_CSV_PATH,
+    )
+    all_scores_csv_path = _optional_diagnostic_path(
+        explicit_path=args.all_scores_csv,
+        disabled=args.no_all_scores_csv,
+        enabled_by_diagnostics=args.diagnostics,
+        output_dir=output_dir,
+        default_path=DEFAULT_ALL_SCORES_CSV_PATH,
+    )
 
     return BnetDatabaseBuildOptions(
         pdb_redo_root=args.pdb_redo_root,
-        accepted_csv_path=args.accepted_csv,
-        accepted_details_csv_path=(
-            None if args.no_accepted_details_csv else args.accepted_details_csv
-        ),
-        rejected_csv_path=None if args.no_rejected_csv else args.rejected_csv,
-        all_scores_csv_path=(
-            None if args.no_all_scores_csv else args.all_scores_csv
-        ),
-        final_reference_csv_path=(
-            None if args.no_final_reference_csv else args.final_reference_csv
-        ),
+        accepted_csv_path=accepted_csv_path,
+        accepted_details_csv_path=accepted_details_csv_path,
+        rejected_csv_path=rejected_csv_path,
+        all_scores_csv_path=all_scores_csv_path,
+        final_reference_csv_path=final_reference_csv_path,
         manifest_path=args.manifest,
-        temperature_cache_csv_path=(
-            None if args.no_temperature_cache_csv else args.temperature_cache_csv
-        ),
+        temperature_cache_csv_path=temperature_cache_csv_path,
         database_id=args.database_id,
         require_data_json=not args.allow_missing_data_json,
         recursive_discovery=not args.no_recursive_discovery,
@@ -1044,10 +1167,77 @@ def parse_args(argv: list[str] | None = None) -> BnetDatabaseBuildOptions:
     )
 
 
-def main(argv: list[str] | None = None) -> int:
+def print_missing_pdb_redo_root_error(
+    *,
+    stream: TextIO = sys.stderr,
+) -> None:
+    """Print a short recovery message for missing PDB-REDO root input."""
+
+    print(MISSING_PDB_REDO_ROOT_MESSAGE, file=stream)
+
+
+def _output_path(output_dir: Path, default_path: Path) -> Path:
+    return output_dir / default_path.name
+
+
+def _optional_diagnostic_path(
+    *,
+    explicit_path: Path | None,
+    disabled: bool,
+    enabled_by_diagnostics: bool,
+    output_dir: Path,
+    default_path: Path,
+) -> Path | None:
+    if disabled:
+        return None
+
+    if explicit_path is not None:
+        return explicit_path
+
+    if enabled_by_diagnostics:
+        return _output_path(output_dir, default_path)
+
+    return None
+
+
+def _positive_int(value: str) -> int:
+    parsed = _int_arg(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {value!r}")
+    return parsed
+
+
+def _non_negative_int(value: str) -> int:
+    parsed = _int_arg(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError(
+            f"expected a non-negative integer, got {value!r}"
+        )
+    return parsed
+
+
+def _int_arg(value: str) -> int:
+    try:
+        return int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            f"expected an integer, got {value!r}"
+        ) from error
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    stderr: TextIO = sys.stderr,
+) -> int:
     """CLI entry point."""
 
-    options = parse_args(argv)
+    args = _parse_cli_args(argv)
+    if args.pdb_redo_root is None:
+        print_missing_pdb_redo_root_error(stream=stderr)
+        return 2
+
+    options = _options_from_args(args)
 
     try:
         build_bnet_reference_database(options)
@@ -1073,7 +1263,9 @@ __all__ = [
     "DEFAULT_OUTPUT_DIR",
     "DEFAULT_REJECTED_CSV_PATH",
     "DEFAULT_TEMPERATURE_CACHE_CSV_PATH",
+    "MISSING_PDB_REDO_ROOT_MESSAGE",
     "STRICT_CRYO_ELIGIBILITY_POLICY_ID",
+    "_build_parser",
     "build_bnet_reference_database",
     "default_max_tasks_in_flight",
     "default_worker_count",

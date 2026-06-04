@@ -1,3 +1,4 @@
+from io import StringIO
 from pathlib import Path
 import tempfile
 import unittest
@@ -5,17 +6,24 @@ from unittest.mock import patch
 
 from database.build import (
     BnetDatabaseBuildOptions,
+    DEFAULT_ACCEPTED_DETAILS_CSV_PATH,
     DEFAULT_ACCEPTED_CSV_PATH,
+    DEFAULT_ALL_SCORES_CSV_PATH,
     DEFAULT_DATABASE_CSV_PATH,
     DEFAULT_FINAL_REFERENCE_CSV_PATH,
+    MISSING_PDB_REDO_ROOT_MESSAGE,
+    DEFAULT_OUTPUT_DIR,
+    DEFAULT_OUTPUT_DIR_HELP,
     DEFAULT_REJECTED_CSV_PATH,
     DEFAULT_TEMPERATURE_CACHE_CSV_PATH,
     _WorkerOptions,
+    _build_parser,
     default_max_tasks_in_flight,
     default_worker_count,
     _process_candidate_worker,
     _process_candidates_parallel,
     build_bnet_reference_database,
+    main,
     parse_args,
 )
 from database.discover import PdbRedoCandidate, PdbRedoDiscoveryResult
@@ -340,6 +348,7 @@ class BnetDatabaseBuildTests(unittest.TestCase):
             options.temperature_cache_csv_path,
             DEFAULT_TEMPERATURE_CACHE_CSV_PATH,
         )
+        self.assertEqual(options.accepted_csv_path.parent, DEFAULT_OUTPUT_DIR)
         self.assertEqual(options.accepted_csv_path.name, "database.accepted.csv")
         self.assertEqual(options.final_reference_csv_path.name, "database.csv")
         self.assertEqual(
@@ -353,6 +362,17 @@ class BnetDatabaseBuildTests(unittest.TestCase):
         )
         self.assertFalse(options.reject_nucleic_acid)
         self.assertFalse(options.attempt_bnet_for_reference_ineligible)
+        self.assertTrue(options.fetch_rcsb_temperature)
+
+    def test_parse_args_can_disable_default_rcsb_temperature_fetch(self) -> None:
+        options = parse_args(
+            [
+                "/tmp/pdb-redo",
+                "--no-fetch-rcsb-temperatures",
+            ]
+        )
+
+        self.assertFalse(options.fetch_rcsb_temperature)
 
     def test_parse_args_can_enable_reference_ineligible_bnet_diagnostics(
         self,
@@ -378,6 +398,57 @@ class BnetDatabaseBuildTests(unittest.TestCase):
         )
 
         self.assertFalse(options.attempt_bnet_for_reference_ineligible)
+
+    def test_parse_args_output_dir_sets_standard_output_paths(self) -> None:
+        output_dir = Path("/tmp/build-output")
+
+        options = parse_args(
+            [
+                "/tmp/pdb-redo",
+                "--output-dir",
+                str(output_dir),
+            ]
+        )
+
+        self.assertEqual(
+            options.accepted_csv_path,
+            output_dir / DEFAULT_ACCEPTED_CSV_PATH.name,
+        )
+        self.assertEqual(
+            options.rejected_csv_path,
+            output_dir / DEFAULT_REJECTED_CSV_PATH.name,
+        )
+        self.assertEqual(
+            options.final_reference_csv_path,
+            output_dir / DEFAULT_FINAL_REFERENCE_CSV_PATH.name,
+        )
+        self.assertEqual(
+            options.temperature_cache_csv_path,
+            output_dir / DEFAULT_TEMPERATURE_CACHE_CSV_PATH.name,
+        )
+        self.assertIsNone(options.accepted_details_csv_path)
+        self.assertIsNone(options.all_scores_csv_path)
+
+    def test_parse_args_diagnostics_enables_optional_output_paths(self) -> None:
+        output_dir = Path("/tmp/build-output")
+
+        options = parse_args(
+            [
+                "/tmp/pdb-redo",
+                "--output-dir",
+                str(output_dir),
+                "--diagnostics",
+            ]
+        )
+
+        self.assertEqual(
+            options.accepted_details_csv_path,
+            output_dir / DEFAULT_ACCEPTED_DETAILS_CSV_PATH.name,
+        )
+        self.assertEqual(
+            options.all_scores_csv_path,
+            output_dir / DEFAULT_ALL_SCORES_CSV_PATH.name,
+        )
 
     def test_default_worker_count_uses_most_cpu_cores_without_cap(self) -> None:
         self.assertEqual(default_worker_count(cpu_count=1), 1)
@@ -413,6 +484,66 @@ class BnetDatabaseBuildTests(unittest.TestCase):
         self.assertIsNone(options.final_reference_csv_path)
         self.assertIsNone(options.temperature_cache_csv_path)
         self.assertTrue(options.reject_nucleic_acid)
+
+    def test_help_is_grouped_like_main_rabdam_cli(self) -> None:
+        help_text = _build_parser().format_help()
+
+        self.assertIn("usage: build_bnet_database PDB_REDO_ROOT [options]", help_text)
+        self.assertIn("input:", help_text)
+        self.assertIn("general options:", help_text)
+        self.assertIn("output options:", help_text)
+        self.assertIn("build performance options:", help_text)
+        self.assertIn("metadata recovery options:", help_text)
+        self.assertIn("reference eligibility options:", help_text)
+        self.assertIn("advanced/debugging options:", help_text)
+
+        input_start = help_text.index("input:")
+        general_start = help_text.index("general options:")
+        output_start = help_text.index("output options:")
+        performance_start = help_text.index("build performance options:")
+        metadata_start = help_text.index("metadata recovery options:")
+        eligibility_start = help_text.index("reference eligibility options:")
+        advanced_start = help_text.index("advanced/debugging options:")
+
+        self.assertLess(input_start, general_start)
+        self.assertLess(general_start, output_start)
+        self.assertLess(output_start, performance_start)
+        self.assertLess(performance_start, metadata_start)
+        self.assertLess(metadata_start, eligibility_start)
+        self.assertLess(eligibility_start, advanced_start)
+
+        general_help = help_text[general_start:output_start]
+        output_help = help_text[output_start:performance_start]
+        performance_help = help_text[performance_start:metadata_start]
+        metadata_help = help_text[metadata_start:eligibility_start]
+        eligibility_help = help_text[eligibility_start:advanced_start]
+        advanced_help = help_text[advanced_start:]
+
+        self.assertIn("-h, --help", general_help)
+        self.assertIn("--overwrite", general_help)
+        self.assertIn("-o DIR, --output-dir DIR", output_help)
+        self.assertIn(str(DEFAULT_OUTPUT_DIR_HELP), output_help)
+        self.assertNotIn(str(DEFAULT_OUTPUT_DIR), output_help)
+        self.assertIn("--diagnostics", output_help)
+        self.assertIn("--jobs INT", performance_help)
+        self.assertIn("--fetch-rcsb-temperatures", metadata_help)
+        self.assertIn("--no-fetch-rcsb-temperatures", metadata_help)
+        self.assertIn("--allow-non-xray", eligibility_help)
+        self.assertIn("--accepted-details-csv PATH", advanced_help)
+        self.assertIn("--calculate-reference-ineligible-bnet", advanced_help)
+
+    def test_main_missing_pdb_redo_root_returns_short_recovery_error(self) -> None:
+        stderr = StringIO()
+
+        with patch("database.build.build_bnet_reference_database") as build_mock:
+            exit_code = main([], stderr=stderr)
+
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(stderr.getvalue(), f"{MISSING_PDB_REDO_ROOT_MESSAGE}\n")
+        self.assertIn("Default usage:", stderr.getvalue())
+        self.assertIn("build_bnet_database downloads/PDB-REDO\n", stderr.getvalue())
+        self.assertIn("build_bnet_database --help", stderr.getvalue())
+        build_mock.assert_not_called()
 
 
 if __name__ == "__main__":
