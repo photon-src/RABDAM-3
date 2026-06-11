@@ -408,6 +408,7 @@ class CliArgumentTests(unittest.TestCase):
         bnet_help = help_text[bnet_start:selection_start]
         selection_help = help_text[selection_start:advanced_start]
         advanced_help = help_text[advanced_start:]
+        normalized_output_download_help = " ".join(output_download_help.split())
         normalized_bdamage_help = " ".join(bdamage_help.split())
         normalized_bnet_help = " ".join(bnet_help.split())
         normalized_selection_help = " ".join(selection_help.split())
@@ -422,7 +423,10 @@ class CliArgumentTests(unittest.TestCase):
         self.assertIn("Print citation information and exit.", general_help)
         self.assertIn("-q, --quiet", general_help)
         self.assertIn("-o PATH, --output-csv PATH", output_download_help)
-        self.assertIn("Default: output/<structure>_BDamage.csv", output_download_help)
+        self.assertIn(
+            "Default: output/<structure>_BDamage.csv",
+            normalized_output_download_help,
+        )
         self.assertIn("--output-dir DIR", output_download_help)
         self.assertIn("--download-dir DIR", output_download_help)
         self.assertIn("--overwrite-download", output_download_help)
